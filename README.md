@@ -32,8 +32,13 @@ Bei einem Startfehler steht der Grund in `iphone_fotos_fehler.log`.
 ## Gut zu wissen
 - **Personen** erscheinen nur, wenn sie in der Fotos-App einen Namen haben.
 - **iCloud-Fotos mit „iPhone-Speicher optimieren“**: Dann liegen viele Originale nur in iCloud,
-  nicht auf dem iPhone. Solche Dateien werden als „nicht auf dem iPhone“ gemeldet.
-  Abhilfe: Einstellungen → Fotos → „Laden und Originale behalten“ (braucht Speicherplatz).
+  nicht auf dem iPhone, und lassen sich per USB nicht laden. Ist auf dem PC **iCloud für Windows**
+  mit „Fotos“ eingerichtet, holt das Tool diese Originale automatisch aus dem Ordner
+  `Bilder\iCloud Photos` (Windows lädt sie dabei aus iCloud). Die Sortierung kommt weiterhin vom iPhone.
+  Läuft iCloud nicht oder fehlt die Anmeldung, startet das Tool iCloud, pausiert mit einem Hinweis
+  und macht nach der Anmeldung automatisch weiter.
+  Was auch dort fehlt (noch nicht synchronisiert), wird als „nicht gefunden“ gemeldet; ein späterer
+  Export holt es nach. Alternative: auf dem iPhone Einstellungen → Fotos → „Laden und Originale behalten“.
 - Ein Foto in mehreren Alben/Personen wird in jeden Ordner kopiert.
 - „Vorhandene überspringen“ ist an, ein abgebrochener Export kann einfach neu gestartet werden.
 - Dateidatum = Aufnahmedatum.
@@ -52,6 +57,7 @@ python iphone_fotos.py --datum ALLE                      (komplette Mediathek na
 - Windows 10/11
 - [Python 3.10+](https://www.python.org/downloads/windows/) (beim Installieren „Add python.exe to PATH“ anhaken)
 - App „Apple Geräte“ oder iTunes (liefert den USB-Treiber fürs iPhone)
+- Empfohlen bei „iPhone-Speicher optimieren“: iCloud für Windows mit aktivierten „Fotos“
 - `pymobiledevice3` wird beim ersten Start automatisch installiert (`requirements.txt`)
 
 ## Projektseite (GitHub Pages)

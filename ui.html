@@ -118,6 +118,10 @@ button, input { font: inherit; color: inherit; }
 .alert strong { display: block; margin-bottom: 2px; }
 .alert.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
 .alert.warn svg { color: var(--warn); }
+.alert.info { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.alert.info > .spinner { color: var(--accent-text); margin-top: 3px; }
+.alert.info p { font-size: var(--fs-sm); }
+.wait-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
 
 /* ===== Kopfzeile ========================================================= */
 .topbar {
@@ -278,14 +282,15 @@ dialog { overflow-x: hidden; }
 .bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .bar > div { height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 300ms var(--ease); }
 .bar-label { display: flex; justify-content: space-between; font-size: var(--fs-sm); color: var(--text-2); margin-top: var(--space-2); font-variant-numeric: tabular-nums; }
-.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
+.stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2); }
+.option:has(input:disabled) { opacity: .55; cursor: not-allowed; }
 .stat { background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); display: grid; }
 .stat b { font-size: var(--fs-xl); font-variant-numeric: tabular-nums; line-height: 1.2; }
 .stat span { color: var(--text-2); font-size: .75rem; }
 .stat.good b { color: var(--success); }
 .stat.warn b { color: var(--warn); }
 .stat.bad b { color: var(--danger); }
-@media (max-width: 480px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .stats { grid-template-columns: repeat(3, 1fr); } }
 .dlg-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
 
 details.log { font-size: var(--fs-sm); }
@@ -403,6 +408,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
   <details class="options" id="optionsMenu">
     <summary class="btn btn-icon" title="Optionen" aria-label="Optionen"><svg aria-hidden="true"><use href="#i-sliders"/></svg></summary>
     <div class="options-panel" role="group" aria-label="Export-Optionen">
+      <label class="option" id="optICloudRow"><input type="checkbox" id="optICloud" checked><span><b>Fehlende aus iCloud holen</b><small id="optICloudHint">Originale, die nicht auf dem iPhone liegen, aus dem Ordner von iCloud für Windows laden.</small></span></label>
       <label class="option"><input type="checkbox" id="optLive" checked><span><b>Live-Photo-Videos</b><small>Die kurzen .MOV-Clips der Live Photos mitnehmen.</small></span></label>
       <label class="option"><input type="checkbox" id="optEdited"><span><b>Bearbeitete Versionen</b><small>Zusätzlich als „…_bearbeitet.jpg“ speichern.</small></span></label>
       <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
@@ -426,14 +432,26 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
       <div class="bar-label"><span id="dlgCount">0 / 0</span><span id="dlgPct">0 %</span></div>
     </div>
     <div class="stats">
-      <div class="stat good"><b id="stCopied">0</b><span>kopiert</span></div>
+      <div class="stat good"><b id="stCopied">0</b><span>vom iPhone</span></div>
+      <div class="stat good"><b id="stICloud">0</b><span>aus iCloud</span></div>
       <div class="stat"><b id="stSkipped">0</b><span>übersprungen</span></div>
-      <div class="stat warn"><b id="stMissing">0</b><span>nur in iCloud</span></div>
+      <div class="stat warn"><b id="stMissing">0</b><span>nicht gefunden</span></div>
       <div class="stat bad"><b id="stFailed">0</b><span>Fehler</span></div>
+    </div>
+    <div id="dlgWait" class="alert info" role="alert" hidden>
+      <span class="spinner" aria-hidden="true"></span>
+      <div>
+        <strong>Warte auf iCloud für Windows</strong>
+        <p id="dlgWaitText"></p>
+        <div class="wait-actions">
+          <button id="icloudGoBtn" class="btn btn-primary" type="button">Angemeldet – weiter</button>
+          <button id="icloudSkipBtn" class="btn" type="button">Ohne iCloud fortfahren</button>
+        </div>
+      </div>
     </div>
     <div id="dlgNote" class="alert warn" hidden>
       <svg aria-hidden="true"><use href="#i-alert"/></svg>
-      <div><strong>Einige Dateien liegen nicht auf dem iPhone</strong><p>Vermutlich ist „iPhone-Speicher optimieren“ aktiv. Unter Einstellungen → Fotos → „Laden und Originale behalten“ werden sie aufs Gerät geladen.</p></div>
+      <div><strong id="dlgNoteTitle">Einige Originale wurden nicht gefunden</strong><p id="dlgNoteText"></p></div>
     </div>
     <details class="log">
       <summary>Protokoll</summary>
@@ -492,7 +510,7 @@ const Demo = DEMO ? (() => {
     const all = [...lib.albums, ...lib.people, ...lib.months];
     const total = all.filter((g) => body.ids.includes(g.id)).reduce((n, g) => n + g.count, 0);
     const e = st.export = { running: true, i: 0, total, name: "", target: body.target, cancelled: false, error: null,
-                            stats: { copied: 0, skipped: 0, missing: 0, failed: 0 } };
+                            icloudUsed: body.icloud, stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0 } };
     st.phase = "exporting"; stopFlag = false;
     log(`${total} Fotos/Videos werden exportiert … (Demo)`);
     const step = Math.max(1, Math.round(total / 50));
@@ -504,6 +522,7 @@ const Demo = DEMO ? (() => {
           e.i++;
           if (e.i % 29 === 0) e.stats.missing++;
           else if (body.skip && e.i % 11 === 0) e.stats.skipped++;
+          else if (body.icloud && e.i % 3) e.stats.icloud++;
           else e.stats.copied++;
         }
         e.name = `IMG_${String(4000 + e.i).padStart(4, "0")}.HEIC`;
@@ -522,7 +541,8 @@ const Demo = DEMO ? (() => {
       case "/api/status": {
         const since = Number(new URLSearchParams(q).get("since")) || 0;
         return { ...st, logs: logs.slice(since), logIndex: logs.length,
-                 defaultTarget: "C:\\Users\\Du\\Pictures\\iPhone Export" };
+                 defaultTarget: "C:\\Users\\Du\\Pictures\\iPhone Export",
+                 icloudDir: "C:\\Users\\Du\\Pictures\\iCloud Photos\\Photos" };
       }
       case "/api/connect":
         st.phase = "connecting"; log("Verbinde mit iPhone … (Demo)");
@@ -605,6 +625,13 @@ async function poll() {
   const prev = S.phase;
   S.phase = st.phase;
   if (!$("targetInput").value) $("targetInput").value = store.get("target", st.defaultTarget);
+  if (S.icloudDir !== st.icloudDir) {
+    S.icloudDir = st.icloudDir;
+    $("optICloud").disabled = !st.icloudDir;
+    $("optICloudHint").textContent = st.icloudDir
+      ? `Originale, die nicht auf dem iPhone liegen, aus „${st.icloudDir}“ laden. Windows lädt sie dabei aus iCloud herunter.`
+      : "Nicht verfügbar: iCloud für Windows mit „iCloud Fotos“ ist auf diesem PC nicht eingerichtet.";
+  }
 
   // Header
   if (st.phase === "connecting") setPill("busy", "Verbinde …");
@@ -848,7 +875,7 @@ $("pickBtn").onclick = async () => {
     if (r.path) { $("targetInput").value = r.path; store.set("target", r.path); }
   } finally { $("pickBtn").disabled = false; }
 };
-for (const [id, key] of [["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
+for (const [id, key] of [["optICloud", "icloud"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
   $(id).checked = store.get(key, $(id).checked);
   $(id).onchange = () => store.set(key, $(id).checked);
 }
@@ -860,11 +887,12 @@ $("exportBtn").onclick = async () => {
   const body = {
     ids: [...S.selected], target: $("targetInput").value.trim(),
     live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
+    icloud: $("optICloud").checked && !$("optICloud").disabled,
   };
   const r = await api("/api/export", body);
   if (!r.ok) { alert(r.error); return; }
   S.wasExporting = true;
-  renderExport({ running: true, i: 0, total: 0, name: "", stats: { copied: 0, skipped: 0, missing: 0, failed: 0 }, target: body.target });
+  renderExport({ running: true, i: 0, total: 0, name: "", stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0 }, target: body.target, icloudUsed: body.icloud });
   setTimeout(poll, 200);
 };
 
@@ -878,13 +906,31 @@ function renderExport(e) {
   $("dlgCount").textContent = `${nf.format(e.i)} / ${nf.format(e.total)}`;
   $("dlgPct").textContent = (done && !e.cancelled ? 100 : pct) + " %";
   $("stCopied").textContent = nf.format(e.stats.copied);
+  $("stICloud").textContent = nf.format(e.stats.icloud || 0);
   $("stSkipped").textContent = nf.format(e.stats.skipped);
   $("stMissing").textContent = nf.format(e.stats.missing);
   $("stFailed").textContent = nf.format(e.stats.failed);
   $("dlgNote").hidden = !e.stats.missing;
+  $("dlgNoteText").textContent = e.icloudUsed
+    ? "Diese Originale liegen weder auf dem iPhone noch im iCloud-Fotos-Ordner deines PCs. Vermutlich hat iCloud für Windows sie noch nicht synchronisiert. Später einfach erneut exportieren (vorhandene Dateien werden übersprungen) oder auf dem iPhone unter Einstellungen → Fotos „Laden und Originale behalten“ wählen."
+    : "Mit „iPhone-Speicher optimieren“ liegen viele Originale nur in iCloud. Installiere iCloud für Windows mit aktivierten iCloud-Fotos, dann holt das Tool sie von dort. Alternativ auf dem iPhone unter Einstellungen → Fotos „Laden und Originale behalten“ wählen.";
+
+  const waiting = !done && !!e.waiting;
+  const box = $("dlgWait");
+  if (waiting && box.hidden) {
+    box.hidden = false;
+    $("icloudGoBtn").disabled = false; $("icloudGoBtn").textContent = "Angemeldet – weiter";
+    $("icloudSkipBtn").disabled = false;
+    $("icloudGoBtn").focus();
+  } else if (!waiting) box.hidden = true;
+  if (waiting) $("dlgWaitText").textContent = e.waiting;
+  document.title = waiting ? "⏸ Warte auf iCloud · iPhone Foto-Export" : (DEMO ? "Demo · iPhone Foto-Export" : "iPhone Foto-Export");
 
   const icon = $("dlgIcon");
-  if (!done) {
+  if (waiting) {
+    $("dlgTitle").textContent = "Export pausiert";
+    $("dlgSub").textContent = "Wartet auf die Anmeldung bei iCloud für Windows";
+  } else if (!done) {
     $("dlgTitle").textContent = "Exportiere …";
     $("dlgSub").textContent = e.name ? `Aktuell: ${e.name}` : "Vorbereiten …";
     icon.className = "dlg-icon"; icon.innerHTML = '<span class="spinner" style="width:22px;height:22px"></span>';
@@ -901,6 +947,16 @@ function renderExport(e) {
   $("openBtn").onclick = () => api("/api/open-folder", { path: e.target });
   updateSummary();
 }
+$("icloudGoBtn").onclick = async () => {
+  const b = $("icloudGoBtn");
+  b.disabled = true; b.textContent = "Prüfe iCloud …";
+  await api("/api/icloud", { action: "retry" });
+  setTimeout(() => { if (!$("dlgWait").hidden) { b.disabled = false; b.textContent = "Angemeldet – weiter"; } }, 20000);
+};
+$("icloudSkipBtn").onclick = async () => {
+  $("icloudSkipBtn").disabled = true; $("icloudGoBtn").disabled = true;
+  await api("/api/icloud", { action: "skip" });
+};
 $("stopBtn").onclick = async () => {
   $("stopBtn").disabled = true;
   $("stopBtn").textContent = "Wird abgebrochen …";

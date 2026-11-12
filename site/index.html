@@ -199,7 +199,7 @@ footer .wrap { display: flex; gap: 16px; justify-content: space-between; flex-wr
         <ul class="checks">
           <li>Ein Foto in mehreren Alben wird in jeden passenden Ordner kopiert.</li>
           <li>Das Dateidatum entspricht dem Aufnahmedatum.</li>
-          <li>Fotos, die nur in iCloud liegen, werden erkannt und gemeldet.</li>
+          <li>Fotos, die nur in iCloud liegen, holt das Tool über iCloud für Windows nach.</li>
         </ul>
       </div>
 <pre aria-label="Beispiel der Ordnerstruktur"><span class="dim">iPhone Export\</span>
@@ -222,6 +222,7 @@ footer .wrap { display: flex; gap: 16px; justify-content: space-between; flex-wr
       <ol class="steps">
         <li><div><h3>Python installieren</h3><p>Python 3.10 oder neuer von python.org installieren. Beim Installieren den Haken bei „Add python.exe to PATH“ setzen.</p><a class="btn" href="https://www.python.org/downloads/windows/" rel="noopener">python.org öffnen</a></div></li>
         <li><div><h3>Apple-Gerätetreiber</h3><p>Die App „Apple Geräte“ (Apple Devices) aus dem Microsoft Store oder iTunes installieren. Sie bringt den USB-Treiber für das iPhone mit.</p></div></li>
+        <li><div><h3>Optional: iCloud für Windows</h3><p>Nutzt dein iPhone „iPhone-Speicher optimieren“, liegen die Originale nur in iCloud. Installiere dann iCloud für Windows aus dem Microsoft Store, melde dich an und aktiviere „Fotos“. Das Tool holt fehlende Originale automatisch von dort.</p></div></li>
         <li><div><h3>Tool herunterladen und entpacken</h3><p>ZIP herunterladen und in einen Ordner deiner Wahl entpacken, zum Beispiel unter Dokumente.</p><a class="btn btn-primary" href="https://github.com/JMDigitalTechnologies/Iphone_Bildexport_Tool/archive/refs/heads/main.zip"><svg aria-hidden="true"><use href="#i-download"/></svg>ZIP herunterladen</a></div></li>
         <li><div><h3>Starten</h3><p>Doppelklick auf <code>iPhone Fotos starten.bat</code>. Beim ersten Start wird die benötigte Bibliothek automatisch installiert, danach öffnet sich die Oberfläche im Browser. iPhone anschließen, entsperren, „Diesem Computer vertrauen“ tippen und loslegen.</p></div></li>
       </ol>
@@ -232,7 +233,7 @@ footer .wrap { display: flex; gap: 16px; justify-content: space-between; flex-wr
     <div class="wrap">
       <h2>Häufige Fragen</h2>
       <div class="faq">
-        <details><summary>Manche Fotos werden als „nur in iCloud“ gemeldet. Warum?</summary><p>Ist in den iPhone-Einstellungen „iPhone-Speicher optimieren“ aktiv, liegen viele Originale nur in iCloud. Unter Einstellungen → Fotos → „Laden und Originale behalten“ werden sie aufs iPhone geladen. Dafür braucht es genug freien Speicher.</p></details>
+        <details><summary>Mein iPhone nutzt „iPhone-Speicher optimieren“. Geht das trotzdem?</summary><p>Ja, mit iCloud für Windows. Dann liegen die Originale nur in iCloud und lassen sich per USB nicht laden. Ist auf dem PC iCloud für Windows mit „Fotos“ eingerichtet, holt das Tool fehlende Originale automatisch von dort; die Sortierung nach Alben, Personen und Datum kommt weiter vom iPhone. Fehlt die Anmeldung bei iCloud, pausiert der Export mit einem Hinweis und läuft danach von selbst weiter. Ohne iCloud für Windows: auf dem iPhone unter Einstellungen → Fotos „Laden und Originale behalten“ wählen.</p></details>
         <details><summary>Warum fehlen Personen in der Liste?</summary><p>Es erscheinen nur Personen, denen du in der Fotos-App einen Namen gegeben hast (Alben → Personen). Danach in der Oberfläche auf „Neu laden“ klicken.</p></details>
         <details><summary>Werden meine Fotos irgendwohin hochgeladen?</summary><p>Nein. Das Tool läuft komplett auf deinem PC. Die Oberfläche ist eine lokale Seite (127.0.0.1), die nur von deinem Rechner aus erreichbar ist. Auf dem iPhone wird nichts verändert oder gelöscht.</p></details>
         <details><summary>Funktioniert das mit jedem iPhone?</summary><p>Entwickelt für aktuelle iPhones (zum Beispiel iPhone 14) mit aktuellem iOS. Das iPhone muss per USB verbunden, entsperrt und dem PC vertraut sein. Läuft etwas nicht, gerne ein Issue auf GitHub anlegen.</p></details>
