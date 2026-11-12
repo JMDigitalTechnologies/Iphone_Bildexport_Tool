@@ -409,6 +409,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
     <summary class="btn btn-icon" title="Optionen" aria-label="Optionen"><svg aria-hidden="true"><use href="#i-sliders"/></svg></summary>
     <div class="options-panel" role="group" aria-label="Export-Optionen">
       <label class="option" id="optICloudRow"><input type="checkbox" id="optICloud" checked><span><b>Fehlende aus iCloud holen</b><small id="optICloudHint">Originale, die nicht auf dem iPhone liegen, aus dem Ordner von iCloud für Windows laden.</small></span></label>
+      <label class="option"><input type="checkbox" id="optVideos" checked><span><b>Videos exportieren</b><small>Videos aus den gewählten Alben, Personen und Monaten mitnehmen. Aus: nur Fotos.</small></span></label>
       <label class="option"><input type="checkbox" id="optLive" checked><span><b>Live-Photo-Videos</b><small>Die kurzen .MOV-Clips der Live Photos mitnehmen.</small></span></label>
       <label class="option"><input type="checkbox" id="optEdited"><span><b>Bearbeitete Versionen</b><small>Zusätzlich als „…_bearbeitet.jpg“ speichern.</small></span></label>
       <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
@@ -491,6 +492,7 @@ const Demo = DEMO ? (() => {
   const mk = (prefix, titles, min, max) => titles.map((title, i) => ({
     id: prefix + i, title, count: min + Math.floor(rnd() * (max - min)), cover: Math.floor(rnd() * 360),
   }));
+  const withVideos = (list) => list.forEach((g) => (g.videos = Math.round(g.count * (0.05 + rnd() * 0.12))));
   function build() {
     const albums = mk("a", ["Urlaub Italien", "Hochzeit Lisa & Tom", "Lieblingsbilder", "Garten", "Weihnachten",
       "Konzerte", "Haustiere", "Wanderung Allgäu", "Ausflug Berlin", "Rezepte"], 6, 140)
@@ -504,11 +506,13 @@ const Demo = DEMO ? (() => {
       months.push({ id: `m${y * 100 + m + 1}`, title: `${MONTHS[m]} ${y}`, label: MONTHS[m], year: y,
                     count: 8 + Math.floor(rnd() * 160), cover: Math.floor(rnd() * 360) });
     }
+    [albums, people, months].forEach(withVideos);
     return { albums, people, months };
   }
   function runExport(body) {
     const all = [...lib.albums, ...lib.people, ...lib.months];
-    const total = all.filter((g) => body.ids.includes(g.id)).reduce((n, g) => n + g.count, 0);
+    const total = all.filter((g) => body.ids.includes(g.id))
+      .reduce((n, g) => n + g.count - (body.videos ? 0 : g.videos), 0);
     const e = st.export = { running: true, i: 0, total, name: "", target: body.target, cancelled: false, error: null,
                             icloudUsed: body.icloud, stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0 } };
     st.phase = "exporting"; stopFlag = false;
@@ -821,13 +825,17 @@ function updateSummary() {
   const gs = selectedGroups();
   const n = (k) => gs.filter((g) => g.id[0] === k).length;
   const a = n("a"), p = n("p"), m = n("m");
-  const files = gs.reduce((n, g) => n + g.count, 0);
+  const withVideos = $("optVideos").checked;
+  const vids = gs.reduce((n, g) => n + (g.videos || 0), 0);
+  const files = gs.reduce((n, g) => n + g.count, 0) - (withVideos ? 0 : vids);
   const parts = [];
   if (a) parts.push(`${a} ${a === 1 ? "Album" : "Alben"}`);
   if (p) parts.push(`${p} ${p === 1 ? "Person" : "Personen"}`);
   if (m) parts.push(`${m} ${m === 1 ? "Monat" : "Monate"}`);
   $("selSummary").textContent = parts.length ? parts.join(" · ") : "Nichts ausgewählt";
-  $("selDetail").textContent = parts.length ? `${nf.format(files)} Fotos & Videos` : "Wähle Alben oder Personen aus";
+  $("selDetail").textContent = !parts.length ? "Wähle Alben oder Personen aus"
+    : withVideos ? `${nf.format(files - vids)} Fotos · ${nf.format(vids)} Videos`
+    : `${nf.format(files)} Fotos (ohne Videos)`;
   $("exportBtn").disabled = !gs.length || S.phase !== "ready";
 }
 
@@ -875,9 +883,9 @@ $("pickBtn").onclick = async () => {
     if (r.path) { $("targetInput").value = r.path; store.set("target", r.path); }
   } finally { $("pickBtn").disabled = false; }
 };
-for (const [id, key] of [["optICloud", "icloud"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
+for (const [id, key] of [["optICloud", "icloud"], ["optVideos", "videos"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
   $(id).checked = store.get(key, $(id).checked);
-  $(id).onchange = () => store.set(key, $(id).checked);
+  $(id).onchange = () => { store.set(key, $(id).checked); updateSummary(); };
 }
 document.addEventListener("click", (e) => { const m = $("optionsMenu"); if (m.open && !m.contains(e.target)) m.open = false; });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("optionsMenu").open = false; });
@@ -887,6 +895,7 @@ $("exportBtn").onclick = async () => {
   const body = {
     ids: [...S.selected], target: $("targetInput").value.trim(),
     live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
+    videos: $("optVideos").checked,
     icloud: $("optICloud").checked && !$("optICloud").disabled,
   };
   const r = await api("/api/export", body);

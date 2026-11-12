@@ -31,6 +31,7 @@ APPLE_EPOCH = 978307200  # 2001-01-01 in Unix-Zeit
 DB_DIR = "/PhotoData"
 DB_FILES = ["Photos.sqlite", "Photos.sqlite-wal", "Photos.sqlite-shm"]
 CHUNK = 4 * 1024 * 1024
+VIDEO_EXT = {".MOV", ".MP4", ".M4V", ".AVI", ".3GP"}
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +129,13 @@ class Asset:
     adjusted: bool
     orig_name: str | None = None   # Originaldateiname (für Abgleich mit iCloud für Windows)
     orig_size: int | None = None   # Originalgröße in Bytes
+    kind: int | None = None        # ZKIND: 0 = Foto, 1 = Video
+
+    @property
+    def is_video(self) -> bool:
+        if self.kind is not None:
+            return self.kind == 1
+        return os.path.splitext(self.filename)[1].upper() in VIDEO_EXT
 
     @property
     def path(self) -> str:
@@ -162,15 +170,17 @@ class PhotoLibrary:
     def _load_assets(self) -> dict[int, Asset]:
         cols = self._cols(self.asset_table)
         adj = "ZHASADJUSTMENTS" if "ZHASADJUSTMENTS" in cols else "0"
+        kind = "ZKIND" if "ZKIND" in cols else "NULL"
         where = "WHERE ZTRASHEDSTATE = 0" if "ZTRASHEDSTATE" in cols else ""
-        sql = (f"SELECT Z_PK, ZDIRECTORY, ZFILENAME, ZDATECREATED, {adj} AS ADJ "
+        sql = (f"SELECT Z_PK, ZDIRECTORY, ZFILENAME, ZDATECREATED, {adj} AS ADJ, {kind} AS KIND "
                f"FROM {self.asset_table} {where}")
         result = {}
         for r in self.con.execute(sql):
             if not r["ZDIRECTORY"] or not r["ZFILENAME"]:
                 continue
             created = r["ZDATECREATED"] + APPLE_EPOCH if r["ZDATECREATED"] else None
-            result[r["Z_PK"]] = Asset(r["Z_PK"], r["ZDIRECTORY"], r["ZFILENAME"], created, bool(r["ADJ"]))
+            result[r["Z_PK"]] = Asset(r["Z_PK"], r["ZDIRECTORY"], r["ZFILENAME"], created, bool(r["ADJ"]),
+                                      kind=r["KIND"])
         if "ZADDITIONALASSETATTRIBUTES" in self.tables:
             ac = self._cols("ZADDITIONALASSETATTRIBUTES")
             if {"ZASSET", "ZORIGINALFILENAME"} <= set(ac):
@@ -342,6 +352,7 @@ class Options:
     edited: bool = False
     skip_existing: bool = True
     icloud: ICloudFolder | None = None   # fehlende Originale aus iCloud für Windows holen
+    videos: bool = True                  # Videos (nicht Live-Photo-Clips) mit exportieren
 
 
 class Exporter:
@@ -505,10 +516,14 @@ class Exporter:
                 sub = "Alben" if g.kind == "album" else "Personen"
                 folder = self.opts.target / sub / safe_name(g.title)
             for pk in g.asset_pks:
-                jobs.append((folder, self.lib.assets[pk]))
+                a = self.lib.assets[pk]
+                if a.is_video and not self.opts.videos:
+                    continue
+                jobs.append((folder, a))
 
         total = len(jobs)
-        self.log(f"{total} Fotos/Videos in {len(groups)} Ordnern werden exportiert …")
+        what = "Fotos/Videos" if self.opts.videos else "Fotos (ohne Videos)"
+        self.log(f"{total} {what} in {len(groups)} Ordnern werden exportiert …")
         s = self.stats  # wird live aktualisiert (für die Fortschrittsanzeige)
         s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0)
         self.missing_examples: list[str] = []
@@ -650,7 +665,8 @@ class WebApp:
         for gid, g in self.groups.items():
             assets = [self.lib.assets[pk] for pk in g.asset_pks]
             cover = max(assets, key=lambda a: a.created or 0).pk if assets else None
-            item = {"id": gid, "title": g.title, "count": len(assets), "cover": cover}
+            item = {"id": gid, "title": g.title, "count": len(assets), "cover": cover,
+                    "videos": sum(1 for a in assets if a.is_video)}
             if g.kind == "month":
                 item["year"] = g.key // 100 or None
                 item["label"] = MONTHS[g.key % 100 - 1] if g.key else "Ohne Datum"
@@ -689,6 +705,7 @@ class WebApp:
             return f"Zielordner kann nicht angelegt werden: {e}"
         opts = Options(target, bool(body.get("live", True)), bool(body.get("edited", False)),
                        bool(body.get("skip", True)))
+        opts.videos = bool(body.get("videos", True))
         use_icloud = bool(body.get("icloud", True)) and self.icloud_dir is not None
         with self.lock:
             if self.phase != "ready":
@@ -890,6 +907,7 @@ def run_cli(argv):
     p.add_argument("--ziel", default=str(Path.home() / "Pictures" / "iPhone Export"))
     p.add_argument("--ohne-live", action="store_true", help="Live-Photo-Videos nicht mitnehmen")
     p.add_argument("--bearbeitet", action="store_true", help="Bearbeitete Versionen zusätzlich speichern")
+    p.add_argument("--ohne-videos", action="store_true", help="Nur Fotos exportieren, Videos weglassen")
     p.add_argument("--ohne-icloud", action="store_true",
                    help="Fehlende Originale NICHT aus dem iCloud-Fotos-Ordner (iCloud für Windows) holen")
     a = p.parse_args(argv)
@@ -936,6 +954,7 @@ def run_cli(argv):
 
     groups = pick(albums, a.album) + pick(people, a.person) + pick_dates(a.datum)
     opts = Options(Path(a.ziel), not a.ohne_live, a.bearbeitet, True)
+    opts.videos = not a.ohne_videos
     icloud_dir = None if a.ohne_icloud else find_icloud_photos_dir()
     if icloud_dir:
         opts.icloud = ICloudFolder(icloud_dir)

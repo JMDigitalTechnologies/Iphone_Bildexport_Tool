@@ -39,6 +39,8 @@ Bei einem Startfehler steht der Grund in `iphone_fotos_fehler.log`.
   und macht nach der Anmeldung automatisch weiter.
   Was auch dort fehlt (noch nicht synchronisiert), wird als „nicht gefunden“ gemeldet; ein späterer
   Export holt es nach. Alternative: auf dem iPhone Einstellungen → Fotos → „Laden und Originale behalten“.
+- **Videos** werden standardmäßig mit exportiert; über die Option „Videos exportieren“ (bzw. `--ohne-videos`)
+  lassen sie sich weglassen. Live-Photo-Clips hängen an der eigenen Option „Live-Photo-Videos“.
 - Ein Foto in mehreren Alben/Personen wird in jeden Ordner kopiert.
 - „Vorhandene überspringen“ ist an, ein abgebrochener Export kann einfach neu gestartet werden.
 - Dateidatum = Aufnahmedatum.
