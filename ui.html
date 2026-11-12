@@ -1,0 +1,747 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPhone Foto-Export</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ccircle cx='16' cy='17' r='6' fill='none' stroke='white' stroke-width='2.5'/%3E%3Crect x='11' y='7' width='10' height='4' rx='1.5' fill='white'/%3E%3C/svg%3E">
+<style>
+/* ===== Design-Tokens ===================================================== */
+:root {
+  color-scheme: light;
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f3;
+  --surface-3: #e3e7ec;
+  --text: #13161b;
+  --text-2: #565e6b;          /* 6.4:1 auf Weiß */
+  --border: #dde1e7;
+  --accent: #2563eb;          /* Weiß darauf 5.2:1 */
+  --accent-hover: #1d4ed8;
+  --accent-soft: #e7eefe;
+  --accent-text: #1d4ed8;
+  --success: #15803d;
+  --success-soft: #e3f4e8;
+  --warn: #a14a06;
+  --warn-soft: #fdf0e1;
+  --danger: #b91c1c;
+  --danger-soft: #fdeaea;
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / .06), 0 1px 3px rgb(16 24 40 / .08);
+  --shadow-lg: 0 12px 32px rgb(16 24 40 / .14), 0 2px 6px rgb(16 24 40 / .06);
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --fs-sm: .8125rem; --fs-base: .9375rem; --fs-lg: 1.125rem; --fs-xl: 1.5rem; --fs-2xl: 2rem;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+  --dur: 160ms;
+  --tap: 44px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e1014; --surface: #16191f; --surface-2: #1e222a; --surface-3: #282d37;
+    --text: #eceff4; --text-2: #a3abb8; --border: #2a2f39;
+    --accent: #2563eb; --accent-hover: #3b74f0; --accent-soft: #1a2747; --accent-text: #8db1ff;
+    --success: #4ade80; --success-soft: #12291b; --warn: #f5a35b; --warn-soft: #2e2012;
+    --danger: #ff8a8a; --danger-soft: #331717;
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / .4); --shadow-lg: 0 16px 40px rgb(0 0 0 / .55);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1014; --surface: #16191f; --surface-2: #1e222a; --surface-3: #282d37;
+  --text: #eceff4; --text-2: #a3abb8; --border: #2a2f39;
+  --accent: #2563eb; --accent-hover: #3b74f0; --accent-soft: #1a2747; --accent-text: #8db1ff;
+  --success: #4ade80; --success-soft: #12291b; --warn: #f5a35b; --warn-soft: #2e2012;
+  --danger: #ff8a8a; --danger-soft: #331717;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .4); --shadow-lg: 0 16px 40px rgb(0 0 0 / .55);
+}
+
+/* ===== Basis ============================================================= */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+  font: 400 var(--fs-base)/1.5 var(--font); display: flex; flex-direction: column;
+}
+h1, h2, h3, p { margin: 0; }
+button, input { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+:focus-visible { outline: 3px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-sm); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+
+/* ===== Komponenten ======================================================= */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  min-height: var(--tap); padding: 0 var(--space-4); border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-weight: 600; cursor: pointer; white-space: nowrap;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-2); }
+.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+.btn-lg { min-height: 52px; padding: 0 var(--space-5); font-size: var(--fs-lg); border-radius: var(--radius); }
+.btn-icon { width: var(--tap); padding: 0; }
+.btn svg { width: 20px; height: 20px; flex: none; }
+
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%; flex: none;
+  border: 2.5px solid currentColor; border-right-color: transparent;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.input {
+  min-height: var(--tap); width: 100%; padding: 0 var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  transition: border-color var(--dur) var(--ease);
+}
+.input:hover { border-color: var(--text-2); }
+.input:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.alert {
+  display: flex; gap: var(--space-3); align-items: flex-start;
+  padding: var(--space-3) var(--space-4); border-radius: var(--radius);
+  background: var(--danger-soft); color: var(--text); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+}
+.alert svg { width: 20px; height: 20px; color: var(--danger); flex: none; margin-top: 2px; }
+.alert p { white-space: pre-wrap; font-size: var(--fs-sm); }
+.alert strong { display: block; margin-bottom: 2px; }
+.alert.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.alert.warn svg { color: var(--warn); }
+
+/* ===== Kopfzeile ========================================================= */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-3) max(var(--space-4), calc((100vw - 1200px) / 2));
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: var(--space-3); margin-right: auto; min-width: 0; }
+.brand-mark { width: 36px; height: 36px; border-radius: 10px; background: var(--accent); display: grid; place-items: center; flex: none; }
+.brand-mark svg { width: 20px; height: 20px; color: #fff; }
+.brand h1 { font-size: var(--fs-lg); font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: var(--space-2); min-height: 32px;
+  padding: 0 var(--space-3); border-radius: 999px; background: var(--surface-2);
+  color: var(--text-2); font-size: var(--fs-sm); font-weight: 600; min-width: 0;
+}
+.pill span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); flex: none; }
+.pill.ok { background: var(--success-soft); color: var(--text); }
+.pill.ok .dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 25%, transparent); }
+.pill .spinner { width: 12px; height: 12px; border-width: 2px; }
+
+/* ===== Layout ============================================================ */
+main { flex: 1; width: 100%; max-width: 1200px; margin: 0 auto; padding: var(--space-5) var(--space-4) 140px; }
+
+/* Willkommen */
+.welcome { max-width: 640px; margin: var(--space-6) auto 0; text-align: center; display: grid; gap: var(--space-5); }
+.hero-art { width: 112px; height: 112px; margin: 0 auto; border-radius: 28px; background: var(--accent-soft); display: grid; place-items: center; }
+.hero-art svg { width: 56px; height: 56px; color: var(--accent-text); }
+.welcome h2 { font-size: var(--fs-2xl); line-height: 1.2; letter-spacing: -.02em; }
+.welcome .lead { color: var(--text-2); font-size: var(--fs-lg); }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); text-align: left; }
+.steps li { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-4); display: grid; gap: var(--space-1); }
+.steps .num { width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent-text); display: grid; place-items: center; font-weight: 700; font-size: var(--fs-sm); margin-bottom: var(--space-1); }
+.steps b { font-size: var(--fs-base); }
+.steps small { color: var(--text-2); font-size: var(--fs-sm); }
+.welcome .btn-lg { justify-self: center; min-width: 240px; }
+.hint { color: var(--text-2); font-size: var(--fs-sm); }
+
+/* Bibliothek */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.tabs { display: inline-flex; padding: 4px; gap: 4px; background: var(--surface-2); border-radius: calc(var(--radius-sm) + 4px); }
+.tab {
+  min-height: 40px; padding: 0 var(--space-4); border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--text-2); font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.badge { min-width: 22px; padding: 0 6px; border-radius: 999px; background: var(--surface-3); font-size: .75rem; line-height: 20px; text-align: center; }
+.tab[aria-selected="true"] .badge { background: var(--accent-soft); color: var(--accent-text); }
+.search { position: relative; flex: 1 1 220px; max-width: 360px; }
+.search svg { position: absolute; left: 12px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); color: var(--text-2); pointer-events: none; }
+.search .input { padding-left: 38px; }
+.toolbar-actions { display: flex; gap: var(--space-1); margin-left: auto; }
+
+.grid { display: grid; gap: var(--space-4); grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); }
+.card {
+  position: relative; display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2); border-radius: var(--radius); background: var(--surface);
+  border: 2px solid transparent; box-shadow: var(--shadow-sm); cursor: pointer;
+  transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.card:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.card:has(input:focus-visible) { outline: 3px solid var(--accent-text); outline-offset: 2px; }
+.card input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.thumb {
+  position: relative; aspect-ratio: 1; border-radius: calc(var(--radius) - 6px); overflow: hidden;
+  display: grid; place-items: center; background: var(--ph, var(--surface-2));
+}
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .initials { font-size: 2.25rem; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgb(0 0 0 / .25); }
+.person .thumb { border-radius: 50%; margin: var(--space-2) var(--space-3) 0; }
+.check {
+  position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; background: rgb(0 0 0 / .35); border: 2px solid #fff;
+  color: transparent; transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.check svg { width: 16px; height: 16px; }
+.card:has(input:checked) .check { background: var(--accent); color: #fff; transform: scale(1.05); }
+.meta { padding: 0 var(--space-2) var(--space-1); min-width: 0; }
+.person .meta { text-align: center; }
+.title { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.count { color: var(--text-2); font-size: var(--fs-sm); }
+
+.empty { text-align: center; padding: var(--space-7) var(--space-4); color: var(--text-2); display: grid; gap: var(--space-2); justify-items: center; }
+.empty svg { width: 40px; height: 40px; opacity: .6; }
+.empty b { color: var(--text); font-size: var(--fs-lg); }
+
+/* ===== Aktionsleiste ===================================================== */
+.actionbar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  padding: var(--space-3) max(var(--space-4), calc((100vw - 1200px) / 2));
+  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border); box-shadow: 0 -8px 24px rgb(16 24 40 / .06);
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-3);
+}
+.summary { display: grid; line-height: 1.25; }
+.summary b { font-size: var(--fs-base); }
+.summary span { color: var(--text-2); font-size: var(--fs-sm); }
+.target { display: flex; gap: var(--space-2); min-width: 0; }
+.target .input { min-width: 0; }
+.options { position: relative; }
+.options summary { list-style: none; }
+.options summary::-webkit-details-marker { display: none; }
+.options-panel {
+  position: absolute; right: 0; bottom: calc(100% + 10px); width: min(340px, calc(100vw - 32px));
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg); padding: var(--space-2);
+}
+.option { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3); border-radius: var(--radius-sm); cursor: pointer; min-height: var(--tap); }
+.option:hover { background: var(--surface-2); }
+.option input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
+.option b { display: block; font-size: var(--fs-base); }
+.option small { color: var(--text-2); font-size: var(--fs-sm); }
+
+@media (max-width: 860px) {
+  .actionbar { grid-template-columns: 1fr auto; }
+  .target { grid-column: 1 / -1; grid-row: 1; }
+  .options { justify-self: end; }
+  .summary { grid-row: 2; }
+  .actionbar > .btn-primary { grid-column: 1 / -1; }
+  main { padding-bottom: 230px; }
+}
+@media (max-width: 560px) {
+  .brand h1 { font-size: var(--fs-base); }
+  .pill { display: none; }
+  .search { max-width: none; flex-basis: 100%; order: 3; }
+  .toolbar-actions { margin-left: 0; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: var(--space-3); }
+  .welcome h2 { font-size: var(--fs-xl); }
+}
+
+/* ===== Export-Dialog ===================================================== */
+dialog {
+  width: min(560px, calc(100vw - 32px)); padding: 0; border: 0; border-radius: var(--radius-lg);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg);
+}
+dialog::backdrop { background: rgb(8 10 14 / .55); backdrop-filter: blur(3px); }
+.dlg { padding: var(--space-5); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+dialog { overflow-x: hidden; }
+.dlg-head { display: flex; align-items: center; gap: var(--space-3); }
+.dlg-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); flex: none; }
+.dlg-icon svg { width: 24px; height: 24px; }
+.dlg-icon.done { background: var(--success-soft); color: var(--success); }
+.dlg h2 { font-size: var(--fs-xl); letter-spacing: -.01em; line-height: 1.2; }
+.dlg-sub { color: var(--text-2); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.bar > div { height: 100%; width: 0; border-radius: inherit; background: var(--accent); transition: width 300ms var(--ease); }
+.bar-label { display: flex; justify-content: space-between; font-size: var(--fs-sm); color: var(--text-2); margin-top: var(--space-2); font-variant-numeric: tabular-nums; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); }
+.stat { background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); display: grid; }
+.stat b { font-size: var(--fs-xl); font-variant-numeric: tabular-nums; line-height: 1.2; }
+.stat span { color: var(--text-2); font-size: .75rem; }
+.stat.good b { color: var(--success); }
+.stat.warn b { color: var(--warn); }
+.stat.bad b { color: var(--danger); }
+@media (max-width: 480px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.dlg-actions { display: flex; justify-content: flex-end; gap: var(--space-2); flex-wrap: wrap; }
+
+details.log { font-size: var(--fs-sm); }
+details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; display: inline-flex; align-items: center; font-weight: 600; }
+.logbox { margin-top: var(--space-2); max-height: 180px; overflow: auto; background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); font: .75rem/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; color: var(--text-2); }
+.page-log { margin-top: var(--space-6); }
+</style>
+</head>
+<body>
+
+<!-- SVG-Symbole -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M10.5 18.5h3"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-usb" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v14"/><circle cx="12" cy="19" r="2"/><path d="M12 13l-4-3V7"/><rect x="6.5" y="5" width="3" height="2"/><path d="M12 11l4-2.5V6"/><circle cx="16" cy="5" r="1.2"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8"/><path d="M4 3v5h5"/><path d="M4 13a8 8 0 0 0 14.6 4.5L20 16"/><path d="M20 21v-5h-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/></symbol>
+  <symbol id="i-done" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.8 2.8L16.5 9.5"/></symbol>
+  <symbol id="i-theme" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17z" fill="currentColor"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.5a5 5 0 0 1 5.5 5"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true"><svg><use href="#i-camera"/></svg></div>
+    <h1>iPhone Foto-Export</h1>
+  </div>
+  <div id="devicePill" class="pill" role="status" aria-live="polite"><span class="dot"></span><span>Nicht verbunden</span></div>
+  <button id="reconnectBtn" class="btn btn-ghost btn-icon" type="button" title="Neu laden" aria-label="Neu verbinden und Daten neu laden" hidden><svg><use href="#i-refresh"/></svg></button>
+  <button id="themeBtn" class="btn btn-ghost btn-icon" type="button" title="Design wechseln" aria-label="Design wechseln (Automatisch)"><svg><use href="#i-theme"/></svg></button>
+</header>
+
+<main>
+  <!-- Willkommen / Verbinden -->
+  <section id="welcome" class="welcome" aria-labelledby="welcomeTitle">
+    <div class="hero-art" aria-hidden="true"><svg><use href="#i-phone"/></svg></div>
+    <div>
+      <h2 id="welcomeTitle">Fotos sortiert vom iPhone holen</h2>
+      <p class="lead">Per USB, sortiert nach deinen Alben und Personen, als Originaldateien.</p>
+    </div>
+    <ol class="steps">
+      <li><span class="num">1</span><b>Anschließen</b><small>iPhone per USB-Kabel mit dem PC verbinden.</small></li>
+      <li><span class="num">2</span><b>Entsperren</b><small>Display entsperren und entsperrt lassen.</small></li>
+      <li><span class="num">3</span><b>Vertrauen</b><small>Auf dem iPhone „Diesem Computer vertrauen“ tippen.</small></li>
+    </ol>
+    <div id="errorBox" class="alert" role="alert" hidden>
+      <svg aria-hidden="true"><use href="#i-alert"/></svg>
+      <div><strong>Verbindung fehlgeschlagen</strong><p id="errorText"></p></div>
+    </div>
+    <button id="connectBtn" class="btn btn-primary btn-lg" type="button"><svg aria-hidden="true"><use href="#i-usb"/></svg><span>iPhone verbinden</span></button>
+    <p class="hint">Das Tool liest nur, auf dem iPhone wird nichts verändert.</p>
+  </section>
+
+  <!-- Bibliothek -->
+  <section id="library" aria-label="Fotobibliothek" hidden>
+    <div id="libError" class="alert" role="alert" hidden style="margin-bottom:16px">
+      <svg aria-hidden="true"><use href="#i-alert"/></svg>
+      <div><strong>Neu laden fehlgeschlagen</strong><p id="libErrorText"></p></div>
+    </div>
+    <div class="toolbar">
+      <div class="tabs" role="tablist" aria-label="Sortierung">
+        <button class="tab" role="tab" id="tab-albums" aria-controls="grid" aria-selected="true" data-tab="albums" type="button">Alben <span class="badge" id="countAlbums">0</span></button>
+        <button class="tab" role="tab" id="tab-people" aria-controls="grid" aria-selected="false" data-tab="people" tabindex="-1" type="button">Personen <span class="badge" id="countPeople">0</span></button>
+      </div>
+      <div class="search">
+        <label for="searchInput" class="sr-only">Suchen</label>
+        <svg aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="searchInput" class="input" type="search" placeholder="Suchen …" autocomplete="off">
+      </div>
+      <div class="toolbar-actions">
+        <button id="selectAllBtn" class="btn btn-ghost" type="button">Alle auswählen</button>
+        <button id="selectNoneBtn" class="btn btn-ghost" type="button">Keine</button>
+      </div>
+    </div>
+    <div id="grid" class="grid" role="tabpanel" aria-labelledby="tab-albums"></div>
+    <div id="empty" class="empty" hidden></div>
+
+    <details class="log page-log">
+      <summary>Protokoll anzeigen</summary>
+      <div class="logbox" id="pageLog" aria-live="off"></div>
+    </details>
+  </section>
+</main>
+
+<!-- Aktionsleiste -->
+<footer id="actionbar" class="actionbar" hidden>
+  <div class="summary" aria-live="polite">
+    <b id="selSummary">Nichts ausgewählt</b>
+    <span id="selDetail">Wähle Alben oder Personen aus</span>
+  </div>
+  <div class="target">
+    <label for="targetInput" class="sr-only">Zielordner</label>
+    <input id="targetInput" class="input" type="text" spellcheck="false">
+    <button id="pickBtn" class="btn" type="button" title="Zielordner wählen"><svg aria-hidden="true"><use href="#i-folder"/></svg><span>Ändern</span></button>
+  </div>
+  <details class="options" id="optionsMenu">
+    <summary class="btn btn-icon" title="Optionen" aria-label="Optionen"><svg aria-hidden="true"><use href="#i-sliders"/></svg></summary>
+    <div class="options-panel" role="group" aria-label="Export-Optionen">
+      <label class="option"><input type="checkbox" id="optLive" checked><span><b>Live-Photo-Videos</b><small>Die kurzen .MOV-Clips der Live Photos mitnehmen.</small></span></label>
+      <label class="option"><input type="checkbox" id="optEdited"><span><b>Bearbeitete Versionen</b><small>Zusätzlich als „…_bearbeitet.jpg“ speichern.</small></span></label>
+      <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
+    </div>
+  </details>
+  <button id="exportBtn" class="btn btn-primary" type="button" disabled><svg aria-hidden="true"><use href="#i-download"/></svg><span>Exportieren</span></button>
+</footer>
+
+<!-- Export-Dialog -->
+<dialog id="exportDlg" aria-labelledby="dlgTitle">
+  <div class="dlg">
+    <div class="dlg-head">
+      <div class="dlg-icon" id="dlgIcon" aria-hidden="true"><svg><use href="#i-download"/></svg></div>
+      <div style="min-width:0">
+        <h2 id="dlgTitle">Exportiere …</h2>
+        <p class="dlg-sub" id="dlgSub">Vorbereiten …</p>
+      </div>
+    </div>
+    <div>
+      <div class="bar" role="progressbar" id="dlgBar" aria-label="Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="dlgBarFill"></div></div>
+      <div class="bar-label"><span id="dlgCount">0 / 0</span><span id="dlgPct">0 %</span></div>
+    </div>
+    <div class="stats">
+      <div class="stat good"><b id="stCopied">0</b><span>kopiert</span></div>
+      <div class="stat"><b id="stSkipped">0</b><span>übersprungen</span></div>
+      <div class="stat warn"><b id="stMissing">0</b><span>nur in iCloud</span></div>
+      <div class="stat bad"><b id="stFailed">0</b><span>Fehler</span></div>
+    </div>
+    <div id="dlgNote" class="alert warn" hidden>
+      <svg aria-hidden="true"><use href="#i-alert"/></svg>
+      <div><strong>Einige Dateien liegen nicht auf dem iPhone</strong><p>Vermutlich ist „iPhone-Speicher optimieren“ aktiv. Unter Einstellungen → Fotos → „Laden und Originale behalten“ werden sie aufs Gerät geladen.</p></div>
+    </div>
+    <details class="log">
+      <summary>Protokoll</summary>
+      <div class="logbox" id="dlgLog"></div>
+    </details>
+    <div class="dlg-actions">
+      <button id="stopBtn" class="btn" type="button">Abbrechen</button>
+      <button id="openBtn" class="btn" type="button" hidden><svg aria-hidden="true"><use href="#i-folder"/></svg><span>Ordner öffnen</span></button>
+      <button id="closeBtn" class="btn btn-primary" type="button" hidden>Fertig</button>
+    </div>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const TOKEN = "__TOKEN__";
+const $ = (id) => document.getElementById(id);
+const nf = new Intl.NumberFormat("de-DE");
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("ife." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("ife." + k, JSON.stringify(v)); } catch {} },
+};
+
+async function api(path, body) {
+  const opts = { headers: { "X-Token": TOKEN } };
+  if (body !== undefined) {
+    opts.method = "POST";
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+const S = {
+  phase: "idle", lib: null, tab: "albums", query: "", selected: new Set(),
+  logIndex: 0, logs: [], wasExporting: false, autoTried: false, lastErr: null,
+};
+
+/* ---------- Theme ---------- */
+const THEMES = ["auto", "light", "dark"];
+const THEME_LABEL = { auto: "Automatisch", light: "Hell", dark: "Dunkel" };
+function applyTheme(t) {
+  if (t === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.dataset.theme = t;
+  $("themeBtn").setAttribute("aria-label", `Design wechseln (${THEME_LABEL[t]})`);
+  $("themeBtn").title = `Design: ${THEME_LABEL[t]}`;
+}
+let theme = store.get("theme", "auto");
+applyTheme(theme);
+$("themeBtn").onclick = () => { theme = THEMES[(THEMES.indexOf(theme) + 1) % 3]; store.set("theme", theme); applyTheme(theme); };
+
+/* ---------- Platzhalter-Farbe aus Name ---------- */
+function hue(s) { let h = 0; for (const c of s) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
+function initials(s) {
+  const parts = s.replace(/[^\p{L}\p{N} ]/gu, " ").trim().split(/\s+/);
+  return ((parts[0]?.[0] || "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+/* ---------- Status-Polling ---------- */
+async function poll() {
+  let st;
+  try { st = await api(`/api/status?since=${S.logIndex}`); }
+  catch { setPill("off", "Tool wurde beendet"); return; }
+  if (st.logs.length) { S.logs.push(...st.logs); S.logIndex = st.logIndex; renderLog(); }
+  const prev = S.phase;
+  S.phase = st.phase;
+  if (!$("targetInput").value) $("targetInput").value = store.get("target", st.defaultTarget);
+
+  // Header
+  if (st.phase === "connecting") setPill("busy", "Verbinde …");
+  else if (st.device) setPill("ok", `${st.device.name} · iOS ${st.device.ios} · ${nf.format(st.device.media)} Medien`);
+  else setPill("off", "Nicht verbunden");
+  $("reconnectBtn").hidden = !st.device;
+  $("reconnectBtn").disabled = st.phase !== "ready";
+
+  // Verbinden-Button
+  const cb = $("connectBtn");
+  cb.disabled = st.phase === "connecting";
+  cb.innerHTML = st.phase === "connecting"
+    ? '<span class="spinner" aria-hidden="true"></span><span>Lade Foto-Datenbank …</span>'
+    : '<svg aria-hidden="true"><use href="#i-usb"/></svg><span>iPhone verbinden</span>';
+
+  // Fehler
+  if (st.error !== S.lastErr) {
+    S.lastErr = st.error;
+    $("errorText").textContent = st.error || "";
+    $("libErrorText").textContent = st.error || "";
+  }
+  $("errorBox").hidden = !st.error || !!S.lib;
+  $("libError").hidden = !st.error || !S.lib;
+
+  if (st.device && (!S.lib || (prev === "connecting" && st.phase === "ready"))) await loadLibrary();
+
+  // Export
+  if (st.export && (st.export.running || S.wasExporting)) renderExport(st.export);
+  S.wasExporting = !!(st.export && st.export.running);
+
+  setTimeout(poll, (st.phase === "connecting" || st.phase === "exporting") ? 500 : 2500);
+}
+
+function setPill(kind, text) {
+  const p = $("devicePill");
+  p.className = "pill" + (kind === "ok" ? " ok" : "");
+  p.innerHTML = (kind === "busy" ? '<span class="spinner" aria-hidden="true"></span>' : '<span class="dot" aria-hidden="true"></span>') + "<span></span>";
+  p.lastChild.textContent = text;
+}
+
+function renderLog() {
+  const txt = S.logs.join("\n");
+  for (const id of ["pageLog", "dlgLog"]) { const el = $(id); el.textContent = txt; el.scrollTop = el.scrollHeight; }
+}
+
+/* ---------- Bibliothek ---------- */
+async function loadLibrary() {
+  S.lib = await api("/api/library");
+  const valid = new Set([...S.lib.albums, ...S.lib.people].map((g) => g.id));
+  for (const id of [...S.selected]) if (!valid.has(id)) S.selected.delete(id);
+  $("countAlbums").textContent = nf.format(S.lib.albums.length);
+  $("countPeople").textContent = nf.format(S.lib.people.length);
+  $("welcome").hidden = true;
+  $("library").hidden = false;
+  $("actionbar").hidden = false;
+  $("errorBox").hidden = true;
+  renderGrid();
+  updateSummary();
+}
+
+function visibleItems() {
+  const q = S.query.trim().toLowerCase();
+  const items = S.lib ? S.lib[S.tab] : [];
+  return q ? items.filter((g) => g.title.toLowerCase().includes(q)) : items;
+}
+
+function renderGrid() {
+  const grid = $("grid");
+  const items = visibleItems();
+  grid.className = "grid" + (S.tab === "people" ? " people" : "");
+  grid.setAttribute("aria-labelledby", "tab-" + S.tab);
+  grid.replaceChildren(...items.map(cardFor));
+  const empty = $("empty");
+  if (items.length) { empty.hidden = true; return; }
+  empty.hidden = false;
+  if (S.query) {
+    empty.innerHTML = '<svg aria-hidden="true"><use href="#i-search"/></svg><b>Keine Treffer</b><span></span>';
+    empty.lastChild.textContent = `Nichts gefunden für „${S.query}“.`;
+  } else if (S.tab === "people") {
+    empty.innerHTML = '<svg aria-hidden="true"><use href="#i-people"/></svg><b>Keine benannten Personen</b>' +
+      "<span>Gib Personen in der Fotos-App einen Namen (Alben → Personen) und lade dann neu.</span>";
+  } else {
+    empty.innerHTML = '<svg aria-hidden="true"><use href="#i-folder"/></svg><b>Keine Alben gefunden</b><span>Auf dem iPhone gibt es keine eigenen Alben mit Fotos.</span>';
+  }
+}
+
+function cardFor(g) {
+  const label = document.createElement("label");
+  label.className = "card" + (S.tab === "people" ? " person" : "");
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = S.selected.has(g.id);
+  cb.setAttribute("aria-label", `${g.title}, ${nf.format(g.count)} Medien`);
+  cb.onchange = () => { cb.checked ? S.selected.add(g.id) : S.selected.delete(g.id); updateSummary(); };
+
+  const thumb = document.createElement("div");
+  thumb.className = "thumb";
+  const h = hue(g.title);
+  thumb.style.setProperty("--ph", `linear-gradient(135deg, hsl(${h} 55% 52%), hsl(${(h + 40) % 360} 60% 40%))`);
+  const ini = document.createElement("span");
+  ini.className = "initials";
+  ini.setAttribute("aria-hidden", "true");
+  ini.textContent = initials(g.title);
+  thumb.append(ini);
+  if (g.cover != null) {
+    const img = document.createElement("img");
+    img.alt = ""; img.loading = "lazy"; img.decoding = "async";
+    img.src = `/api/thumb?id=${g.cover}&t=${encodeURIComponent(TOKEN)}`;
+    img.onload = () => ini.remove();
+    img.onerror = () => img.remove();
+    thumb.append(img);
+  }
+  const check = document.createElement("span");
+  check.className = "check";
+  check.setAttribute("aria-hidden", "true");
+  check.innerHTML = '<svg><use href="#i-check"/></svg>';
+  if (S.tab === "people") label.append(cb, thumb); else { thumb.append(check); label.append(cb, thumb); }
+  if (S.tab === "people") label.append(check);
+
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  const t = document.createElement("span"); t.className = "title"; t.textContent = g.title; t.title = g.title;
+  const c = document.createElement("span"); c.className = "count"; c.textContent = `${nf.format(g.count)} ${g.count === 1 ? "Medium" : "Medien"}`;
+  meta.append(t, c);
+  label.append(meta);
+  return label;
+}
+
+function selectedGroups() {
+  if (!S.lib) return [];
+  return [...S.lib.albums, ...S.lib.people].filter((g) => S.selected.has(g.id));
+}
+
+function updateSummary() {
+  const gs = selectedGroups();
+  const a = gs.filter((g) => g.id[0] === "a").length, p = gs.length - a;
+  const files = gs.reduce((n, g) => n + g.count, 0);
+  const parts = [];
+  if (a) parts.push(`${a} ${a === 1 ? "Album" : "Alben"}`);
+  if (p) parts.push(`${p} ${p === 1 ? "Person" : "Personen"}`);
+  $("selSummary").textContent = parts.length ? parts.join(" · ") : "Nichts ausgewählt";
+  $("selDetail").textContent = parts.length ? `${nf.format(files)} Fotos & Videos` : "Wähle Alben oder Personen aus";
+  $("exportBtn").disabled = !gs.length || S.phase !== "ready";
+}
+
+/* ---------- Tabs (mit Pfeiltasten) ---------- */
+const tabs = [...document.querySelectorAll(".tab")];
+function selectTab(name, focus) {
+  S.tab = name;
+  for (const t of tabs) {
+    const on = t.dataset.tab === name;
+    t.setAttribute("aria-selected", on); t.tabIndex = on ? 0 : -1;
+    if (on && focus) t.focus();
+  }
+  renderGrid();
+}
+tabs.forEach((t, i) => {
+  t.onclick = () => selectTab(t.dataset.tab);
+  t.onkeydown = (e) => {
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      selectTab(tabs[(i + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length].dataset.tab, true);
+    }
+  };
+});
+
+$("searchInput").oninput = (e) => { S.query = e.target.value; renderGrid(); };
+$("selectAllBtn").onclick = () => { visibleItems().forEach((g) => S.selected.add(g.id)); renderGrid(); updateSummary(); };
+$("selectNoneBtn").onclick = () => { S.selected.clear(); renderGrid(); updateSummary(); };
+
+/* ---------- Verbinden ---------- */
+async function connect() {
+  S.phase = "connecting";
+  $("connectBtn").disabled = true;
+  await api("/api/connect", {});
+  setTimeout(poll, 300);
+}
+$("connectBtn").onclick = connect;
+$("reconnectBtn").onclick = connect;
+
+/* ---------- Ziel & Optionen ---------- */
+$("targetInput").onchange = (e) => store.set("target", e.target.value);
+$("pickBtn").onclick = async () => {
+  $("pickBtn").disabled = true;
+  try {
+    const r = await api("/api/pick-folder", { initial: $("targetInput").value });
+    if (r.path) { $("targetInput").value = r.path; store.set("target", r.path); }
+  } finally { $("pickBtn").disabled = false; }
+};
+for (const [id, key] of [["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
+  $(id).checked = store.get(key, $(id).checked);
+  $(id).onchange = () => store.set(key, $(id).checked);
+}
+document.addEventListener("click", (e) => { const m = $("optionsMenu"); if (m.open && !m.contains(e.target)) m.open = false; });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("optionsMenu").open = false; });
+
+/* ---------- Export ---------- */
+$("exportBtn").onclick = async () => {
+  const body = {
+    ids: [...S.selected], target: $("targetInput").value.trim(),
+    live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
+  };
+  const r = await api("/api/export", body);
+  if (!r.ok) { alert(r.error); return; }
+  S.wasExporting = true;
+  renderExport({ running: true, i: 0, total: 0, name: "", stats: { copied: 0, skipped: 0, missing: 0, failed: 0 }, target: body.target });
+  setTimeout(poll, 200);
+};
+
+function renderExport(e) {
+  const dlg = $("exportDlg");
+  if (!dlg.open) dlg.showModal();
+  const pct = e.total ? Math.round((e.i / e.total) * 100) : 0;
+  const done = !e.running;
+  $("dlgBarFill").style.width = (done && !e.cancelled ? 100 : pct) + "%";
+  $("dlgBar").setAttribute("aria-valuenow", done && !e.cancelled ? 100 : pct);
+  $("dlgCount").textContent = `${nf.format(e.i)} / ${nf.format(e.total)}`;
+  $("dlgPct").textContent = (done && !e.cancelled ? 100 : pct) + " %";
+  $("stCopied").textContent = nf.format(e.stats.copied);
+  $("stSkipped").textContent = nf.format(e.stats.skipped);
+  $("stMissing").textContent = nf.format(e.stats.missing);
+  $("stFailed").textContent = nf.format(e.stats.failed);
+  $("dlgNote").hidden = !e.stats.missing;
+
+  const icon = $("dlgIcon");
+  if (!done) {
+    $("dlgTitle").textContent = "Exportiere …";
+    $("dlgSub").textContent = e.name ? `Aktuell: ${e.name}` : "Vorbereiten …";
+    icon.className = "dlg-icon"; icon.innerHTML = '<span class="spinner" style="width:22px;height:22px"></span>';
+  } else {
+    $("dlgTitle").textContent = e.error ? "Export fehlgeschlagen" : e.cancelled ? "Export abgebrochen" : "Export fertig";
+    $("dlgSub").textContent = e.error || e.target;
+    $("dlgSub").title = e.target;
+    icon.className = "dlg-icon" + (e.error || e.cancelled ? "" : " done");
+    icon.innerHTML = `<svg><use href="#${e.error || e.cancelled ? "i-alert" : "i-done"}"/></svg>`;
+  }
+  $("stopBtn").hidden = done;
+  $("openBtn").hidden = !done;
+  $("closeBtn").hidden = !done;
+  $("openBtn").onclick = () => api("/api/open-folder", { path: e.target });
+  updateSummary();
+}
+$("stopBtn").onclick = async () => {
+  $("stopBtn").disabled = true;
+  $("stopBtn").textContent = "Wird abgebrochen …";
+  await api("/api/stop", {});
+};
+$("closeBtn").onclick = () => {
+  $("exportDlg").close();
+  $("stopBtn").disabled = false; $("stopBtn").textContent = "Abbrechen";
+};
+$("exportDlg").addEventListener("cancel", (e) => { if (S.phase === "exporting") e.preventDefault(); });
+
+/* ---------- Lebenszeichen / Beenden ---------- */
+window.addEventListener("pagehide", () => {
+  try { navigator.sendBeacon(`/api/bye?t=${encodeURIComponent(TOKEN)}`, "{}"); } catch {}
+});
+
+poll();
+</script>
+</body>
+</html>
