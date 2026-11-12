@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iPhone Foto-Export</title>
+<meta name="description" content="Kostenloses Open-Source-Tool für Windows: iPhone-Fotos per USB nach Alben, Personen oder Jahr und Monat sortiert auf den PC kopieren.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ccircle cx='16' cy='17' r='6' fill='none' stroke='white' stroke-width='2.5'/%3E%3Crect x='11' y='7' width='10' height='4' rx='1.5' fill='white'/%3E%3C/svg%3E">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f5f6f8; --surface: #ffffff; --surface-2: #eef0f3; --text: #13161b; --text-2: #565e6b;
+  --border: #dde1e7; --accent: #2563eb; --accent-hover: #1d4ed8; --accent-soft: #e7eefe; --accent-text: #1d4ed8;
+  --code-bg: #0f172a; --code-text: #e2e8f0;
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / .06), 0 1px 3px rgb(16 24 40 / .08);
+  --shadow-lg: 0 24px 60px rgb(16 24 40 / .16), 0 4px 12px rgb(16 24 40 / .06);
+  --radius-sm: 8px; --radius: 14px; --radius-lg: 22px;
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0e1014; --surface: #16191f; --surface-2: #1e222a; --text: #eceff4; --text-2: #a3abb8;
+    --border: #2a2f39; --accent-hover: #3b74f0; --accent-soft: #1a2747; --accent-text: #8db1ff;
+    --code-bg: #0a0c10; --shadow-sm: 0 1px 2px rgb(0 0 0 / .4); --shadow-lg: 0 24px 60px rgb(0 0 0 / .6);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0e1014; --surface: #16191f; --surface-2: #1e222a; --text: #eceff4; --text-2: #a3abb8;
+  --border: #2a2f39; --accent-hover: #3b74f0; --accent-soft: #1a2747; --accent-text: #8db1ff;
+  --code-bg: #0a0c10; --shadow-sm: 0 1px 2px rgb(0 0 0 / .4); --shadow-lg: 0 24px 60px rgb(0 0 0 / .6);
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 1rem/1.6 var(--font); }
+h1, h2, h3, p { margin: 0; }
+a { color: var(--accent-text); }
+:focus-visible { outline: 3px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-sm); }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { transition: none !important; } }
+.wrap { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px;
+  padding: 0 22px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); font-weight: 600; text-decoration: none; white-space: nowrap;
+  transition: background 160ms var(--ease), transform 160ms var(--ease);
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn svg { width: 20px; height: 20px; flex: none; }
+
+/* Navigation */
+.nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
+.nav .wrap { display: flex; align-items: center; gap: 16px; min-height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); text-decoration: none; margin-right: auto; }
+.brand-mark { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); display: grid; place-items: center; }
+.brand-mark svg { width: 19px; height: 19px; color: #fff; }
+.nav-links { display: flex; gap: 4px; }
+.nav-links a { color: var(--text-2); text-decoration: none; font-weight: 600; font-size: .9375rem; padding: 10px 12px; border-radius: 8px; }
+.nav-links a:hover { color: var(--text); background: var(--surface-2); }
+.nav .btn { min-height: 40px; padding: 0 14px; }
+@media (max-width: 720px) { .nav-links { display: none; } }
+
+/* Hero */
+.hero { padding: 72px 0 40px; text-align: center; }
+.chips { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+.chip { padding: 4px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: .8125rem; font-weight: 700; }
+.hero h1 { font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.1; letter-spacing: -.03em; max-width: 820px; margin: 0 auto; }
+.hero .lead { color: var(--text-2); font-size: clamp(1.05rem, 2vw, 1.25rem); max-width: 640px; margin: 20px auto 0; }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 32px; }
+.fine { color: var(--text-2); font-size: .875rem; margin-top: 14px; }
+
+/* Demo-Fenster */
+.preview { padding: 24px 0 72px; }
+.window { border-radius: var(--radius-lg); overflow: hidden; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg); }
+.window-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: .8125rem; color: var(--text-2); }
+.window-bar i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); }
+.window-bar span { margin: 0 auto; padding: 2px 14px; border-radius: 6px; background: var(--surface); }
+.window iframe { display: block; width: 100%; height: 620px; border: 0; background: var(--bg); }
+.preview-note { text-align: center; color: var(--text-2); font-size: .875rem; margin-top: 12px; }
+@media (max-width: 640px) { .window iframe { height: 520px; } }
+
+/* Abschnitte */
+section.block { padding: 64px 0; border-top: 1px solid var(--border); }
+.block h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); letter-spacing: -.02em; line-height: 1.2; }
+.block .sub { color: var(--text-2); margin-top: 8px; max-width: 640px; }
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-top: 32px; }
+.feature { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow-sm); }
+.feature .ic { width: 44px; height: 44px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-text); display: grid; place-items: center; margin-bottom: 14px; }
+.feature .ic svg { width: 22px; height: 22px; }
+.feature h3 { font-size: 1.0625rem; margin-bottom: 6px; }
+.feature p { color: var(--text-2); font-size: .9375rem; }
+
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: center; }
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+pre { margin: 0; background: var(--code-bg); color: var(--code-text); border-radius: var(--radius); padding: 20px 22px; overflow-x: auto; font: .875rem/1.7 var(--mono); }
+pre .dim { color: #94a3b8; }
+pre .f { color: #93c5fd; }
+code { font-family: var(--mono); font-size: .9em; background: var(--surface-2); padding: 1px 6px; border-radius: 5px; }
+.checks { list-style: none; padding: 0; margin: 20px 0 0; display: grid; gap: 10px; }
+.checks li { display: flex; gap: 10px; color: var(--text-2); }
+.checks li::before { content: ""; flex: none; width: 20px; height: 20px; margin-top: 3px; border-radius: 50%; background: var(--accent-soft) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 12.5l4 4L18 8'/%3E%3C/svg%3E") center / 13px no-repeat; }
+
+.steps { list-style: none; padding: 0; margin: 32px 0 0; display: grid; gap: 14px; counter-reset: s; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 40px 1fr; gap: 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.steps li::before { content: counter(s); width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: #fff; font-weight: 700; display: grid; place-items: center; }
+.steps h3 { font-size: 1.0625rem; margin-bottom: 4px; }
+.steps p { color: var(--text-2); font-size: .9375rem; }
+.steps .btn { margin-top: 12px; min-height: 44px; }
+
+.faq { margin-top: 28px; display: grid; gap: 10px; max-width: 820px; }
+.faq details { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.faq summary { cursor: pointer; padding: 16px 20px; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 12px; min-height: 44px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; color: var(--text-2); font-size: 1.3rem; line-height: 1; transition: transform 160ms var(--ease); }
+.faq details[open] summary::after { transform: rotate(45deg); }
+.faq details p { padding: 0 20px 18px; color: var(--text-2); }
+
+footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--text-2); font-size: .875rem; }
+footer .wrap { display: flex; gap: 16px; justify-content: space-between; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M8 5.5v13l10-6.5z"/></symbol>
+  <symbol id="i-github" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2z"/></symbol>
+  <symbol id="i-album" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M7 2.5h10"/><path d="M3 16l5-5 4 4 3-3 6 6"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16 14.5a5 5 0 0 1 5.5 5"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-live" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="6.5" stroke-dasharray="2 2.2"/><circle cx="12" cy="12" r="9.5"/></symbol>
+  <symbol id="i-resume" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"><svg><use href="#i-camera"/></svg></span>iPhone Foto-Export</a>
+    <nav class="nav-links" aria-label="Seitenbereiche">
+      <a href="#funktionen">Funktionen</a>
+      <a href="#download">Installation</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="btn" href="https://github.com/JMDigitalTechnologies/Iphone_Bildexport_Tool"><svg aria-hidden="true"><use href="#i-github"/></svg><span>GitHub</span></a>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap">
+      <div class="chips"><span class="chip">Kostenlos</span><span class="chip">Open Source · MIT</span><span class="chip">Windows 10 / 11</span></div>
+      <h1>iPhone-Fotos sortiert auf den PC holen</h1>
+      <p class="lead">Per USB-Kabel, sortiert nach deinen Alben, nach Personen oder nach Jahr und Monat. Als Originaldateien, ohne Cloud und ohne Konto.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="#download"><svg aria-hidden="true"><use href="#i-download"/></svg>Kostenlos herunterladen</a>
+        <a class="btn" href="demo/"><svg aria-hidden="true"><use href="#i-play"/></svg>Live-Demo öffnen</a>
+      </div>
+      <p class="fine">Der normale Windows-Import kennt nur den Ordner DCIM. Dieses Tool liest die Sortierung aus der Fotos-App.</p>
+    </div>
+  </section>
+
+  <section class="preview" aria-label="Interaktive Vorschau">
+    <div class="wrap">
+      <div class="window">
+        <div class="window-bar" aria-hidden="true"><i></i><i></i><i></i><span>iPhone Foto-Export</span></div>
+        <iframe src="demo/" title="Interaktive Demo des iPhone Foto-Export mit Beispieldaten" loading="lazy"></iframe>
+      </div>
+      <p class="preview-note">Probier es aus: Das ist die echte Oberfläche, hier mit Beispieldaten statt eines iPhones.</p>
+    </div>
+  </section>
+
+  <section class="block" id="funktionen">
+    <div class="wrap">
+      <h2>Was das Tool kann</h2>
+      <p class="sub">Wähle aus, was du brauchst, und kombiniere es beliebig in einem Durchgang.</p>
+      <div class="features">
+        <article class="feature"><div class="ic" aria-hidden="true"><svg><use href="#i-album"/></svg></div><h3>Nach Alben</h3><p>Jedes Album der Fotos-App wird ein eigener Ordner, mit allen Fotos und Videos darin.</p></article>
+        <article class="feature"><div class="ic" aria-hidden="true"><svg><use href="#i-people"/></svg></div><h3>Nach Personen</h3><p>Nutzt die Gesichtserkennung des iPhones: ein Ordner pro benannter Person.</p></article>
+        <article class="feature"><div class="ic" aria-hidden="true"><svg><use href="#i-calendar"/></svg></div><h3>Nach Jahr &amp; Monat</h3><p>Die ganze Mediathek nach Aufnahmedatum, mit einem Klick auf „Ganzes Jahr“.</p></article>
+        <article class="feature"><div class="ic" aria-hidden="true"><svg><use href="#i-live"/></svg></div><h3>Originale &amp; Live Photos</h3><p>Originaldateien (HEIC, JPG, MOV), auf Wunsch mit Live-Photo-Clips und bearbeiteten Versionen.</p></article>
+        <article class="feature"><div class="ic" aria-hidden="true"><svg><use href="#i-lock"/></svg></div><h3>Alles lokal</h3><p>Keine Cloud, kein Konto, keine Datenübertragung ins Internet. Auf dem iPhone wird nichts verändert.</p></article>
+        <article class="feature"><div class="ic" aria-hidden="true"><svg><use href="#i-resume"/></svg></div><h3>Fortsetzen</h3><p>Bereits kopierte Dateien werden übersprungen. Ein abgebrochener Export läuft einfach weiter.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" aria-labelledby="ordnerTitle">
+    <div class="wrap split">
+      <div>
+        <h2 id="ordnerTitle">Ordentliche Ordner statt Dateichaos</h2>
+        <p class="sub">So landen die Fotos im Zielordner deiner Wahl:</p>
+        <ul class="checks">
+          <li>Ein Foto in mehreren Alben wird in jeden passenden Ordner kopiert.</li>
+          <li>Das Dateidatum entspricht dem Aufnahmedatum.</li>
+          <li>Fotos, die nur in iCloud liegen, werden erkannt und gemeldet.</li>
+        </ul>
+      </div>
+<pre aria-label="Beispiel der Ordnerstruktur"><span class="dim">iPhone Export\</span>
+├─ <span class="f">Alben\</span>
+│  └─ Urlaub Italien\
+│     ├─ IMG_1234.HEIC
+│     └─ IMG_1234.MOV   <span class="dim">← Live Photo</span>
+├─ <span class="f">Personen\</span>
+│  └─ Anna\IMG_1234.HEIC
+└─ <span class="f">Nach Datum\</span>
+   └─ 2025\
+      └─ 07 Juli\IMG_1234.HEIC</pre>
+    </div>
+  </section>
+
+  <section class="block" id="download">
+    <div class="wrap">
+      <h2>Installation unter Windows</h2>
+      <p class="sub">Einmalig in etwa fünf Minuten eingerichtet.</p>
+      <ol class="steps">
+        <li><div><h3>Python installieren</h3><p>Python 3.10 oder neuer von python.org installieren. Beim Installieren den Haken bei „Add python.exe to PATH“ setzen.</p><a class="btn" href="https://www.python.org/downloads/windows/" rel="noopener">python.org öffnen</a></div></li>
+        <li><div><h3>Apple-Gerätetreiber</h3><p>Die App „Apple Geräte“ (Apple Devices) aus dem Microsoft Store oder iTunes installieren. Sie bringt den USB-Treiber für das iPhone mit.</p></div></li>
+        <li><div><h3>Tool herunterladen und entpacken</h3><p>ZIP herunterladen und in einen Ordner deiner Wahl entpacken, zum Beispiel unter Dokumente.</p><a class="btn btn-primary" href="https://github.com/JMDigitalTechnologies/Iphone_Bildexport_Tool/archive/refs/heads/main.zip"><svg aria-hidden="true"><use href="#i-download"/></svg>ZIP herunterladen</a></div></li>
+        <li><div><h3>Starten</h3><p>Doppelklick auf <code>iPhone Fotos starten.bat</code>. Beim ersten Start wird die benötigte Bibliothek automatisch installiert, danach öffnet sich die Oberfläche im Browser. iPhone anschließen, entsperren, „Diesem Computer vertrauen“ tippen und loslegen.</p></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="block" id="faq">
+    <div class="wrap">
+      <h2>Häufige Fragen</h2>
+      <div class="faq">
+        <details><summary>Manche Fotos werden als „nur in iCloud“ gemeldet. Warum?</summary><p>Ist in den iPhone-Einstellungen „iPhone-Speicher optimieren“ aktiv, liegen viele Originale nur in iCloud. Unter Einstellungen → Fotos → „Laden und Originale behalten“ werden sie aufs iPhone geladen. Dafür braucht es genug freien Speicher.</p></details>
+        <details><summary>Warum fehlen Personen in der Liste?</summary><p>Es erscheinen nur Personen, denen du in der Fotos-App einen Namen gegeben hast (Alben → Personen). Danach in der Oberfläche auf „Neu laden“ klicken.</p></details>
+        <details><summary>Werden meine Fotos irgendwohin hochgeladen?</summary><p>Nein. Das Tool läuft komplett auf deinem PC. Die Oberfläche ist eine lokale Seite (127.0.0.1), die nur von deinem Rechner aus erreichbar ist. Auf dem iPhone wird nichts verändert oder gelöscht.</p></details>
+        <details><summary>Funktioniert das mit jedem iPhone?</summary><p>Entwickelt für aktuelle iPhones (zum Beispiel iPhone 14) mit aktuellem iOS. Das iPhone muss per USB verbunden, entsperrt und dem PC vertraut sein. Läuft etwas nicht, gerne ein Issue auf GitHub anlegen.</p></details>
+        <details><summary>Was kostet das Tool?</summary><p>Nichts. Es ist Open Source unter der MIT-Lizenz und darf frei genutzt, verändert und weitergegeben werden.</p></details>
+        <details><summary>Läuft das auch auf dem Mac?</summary><p>Die Oberfläche und der Start sind für Windows gebaut. Auf dem Mac gibt es mit der Fotos-App bereits einen eingebauten Export.</p></details>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 JM Digital Technologies · <a href="https://github.com/JMDigitalTechnologies/Iphone_Bildexport_Tool/blob/main/LICENSE">MIT-Lizenz</a> · <a href="https://github.com/JMDigitalTechnologies/Iphone_Bildexport_Tool">Quellcode auf GitHub</a></span>
+    <span>Kein Produkt von Apple. iPhone ist eine Marke der Apple Inc.</span>
+  </div>
+</footer>
+</body>
+</html>

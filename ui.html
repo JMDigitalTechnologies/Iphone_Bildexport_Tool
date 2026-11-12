@@ -292,6 +292,14 @@ details.log { font-size: var(--fs-sm); }
 details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; display: inline-flex; align-items: center; font-weight: 600; }
 .logbox { margin-top: var(--space-2); max-height: 180px; overflow: auto; background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); font: .75rem/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace; white-space: pre-wrap; color: var(--text-2); }
 .page-log { margin-top: var(--space-6); }
+
+.demo-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-5); border-radius: var(--radius);
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  font-size: var(--fs-sm);
+}
+.demo-banner a { text-decoration: none; }
 </style>
 </head>
 <body>
@@ -324,12 +332,17 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
 </header>
 
 <main>
+  <!-- Nur in der Online-Demo sichtbar -->
+  <div id="demoBanner" class="demo-banner" role="note" hidden>
+    <span><b>Demo mit Beispieldaten.</b> Hier wird kein iPhone gelesen und nichts kopiert.</span>
+    <a class="btn btn-primary" href="../#download" target="_top">Tool herunterladen</a>
+  </div>
   <!-- Willkommen / Verbinden -->
   <section id="welcome" class="welcome" aria-labelledby="welcomeTitle">
     <div class="hero-art" aria-hidden="true"><svg><use href="#i-phone"/></svg></div>
     <div>
       <h2 id="welcomeTitle">Fotos sortiert vom iPhone holen</h2>
-      <p class="lead">Per USB, sortiert nach deinen Alben und Personen, als Originaldateien.</p>
+      <p class="lead">Per USB, sortiert nach Alben, Personen oder Datum, als Originaldateien.</p>
     </div>
     <ol class="steps">
       <li><span class="num">1</span><b>Anschließen</b><small>iPhone per USB-Kabel mit dem PC verbinden.</small></li>
@@ -445,7 +458,109 @@ const store = {
   set(k, v) { try { localStorage.setItem("ife." + k, JSON.stringify(v)); } catch {} },
 };
 
+/* ---------- Online-Demo (GitHub Pages): simuliertes iPhone ----------
+   Aktiv, wenn die Seite nicht vom lokalen Tool ausgeliefert wird
+   (dann wurde der Platzhalter-Token nicht ersetzt). */
+const DEMO = TOKEN.startsWith("__");
+const Demo = DEMO ? (() => {
+  const MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const st = { phase: "idle", error: null, device: null, export: null };
+  const logs = [];
+  let lib = null, stopFlag = false;
+  const log = (m) => logs.push(`${new Date().toLocaleTimeString("de-DE")}  ${m}`);
+  const mk = (prefix, titles, min, max) => titles.map((title, i) => ({
+    id: prefix + i, title, count: min + Math.floor(rnd() * (max - min)), cover: Math.floor(rnd() * 360),
+  }));
+  function build() {
+    const albums = mk("a", ["Urlaub Italien", "Hochzeit Lisa & Tom", "Lieblingsbilder", "Garten", "Weihnachten",
+      "Konzerte", "Haustiere", "Wanderung Allgäu", "Ausflug Berlin", "Rezepte"], 6, 140)
+      .sort((a, b) => a.title.localeCompare(b.title, "de"));
+    const people = mk("p", ["Anna", "Ben", "Clara", "Oma Helga", "Max", "Sophie"], 12, 260);
+    const months = [];
+    const now = new Date();
+    for (let k = 0; k < 30; k++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - k, 1);
+      const y = d.getFullYear(), m = d.getMonth();
+      months.push({ id: `m${y * 100 + m + 1}`, title: `${MONTHS[m]} ${y}`, label: MONTHS[m], year: y,
+                    count: 8 + Math.floor(rnd() * 160), cover: Math.floor(rnd() * 360) });
+    }
+    return { albums, people, months };
+  }
+  function runExport(body) {
+    const all = [...lib.albums, ...lib.people, ...lib.months];
+    const total = all.filter((g) => body.ids.includes(g.id)).reduce((n, g) => n + g.count, 0);
+    const e = st.export = { running: true, i: 0, total, name: "", target: body.target, cancelled: false, error: null,
+                            stats: { copied: 0, skipped: 0, missing: 0, failed: 0 } };
+    st.phase = "exporting"; stopFlag = false;
+    log(`${total} Fotos/Videos werden exportiert … (Demo)`);
+    const step = Math.max(1, Math.round(total / 50));
+    const timer = setInterval(() => {
+      if (stopFlag) { e.cancelled = true; log("Abgebrochen."); }
+      else {
+        const n = Math.min(step, total - e.i);
+        for (let k = 0; k < n; k++) {
+          e.i++;
+          if (e.i % 29 === 0) e.stats.missing++;
+          else if (body.skip && e.i % 11 === 0) e.stats.skipped++;
+          else e.stats.copied++;
+        }
+        e.name = `IMG_${String(4000 + e.i).padStart(4, "0")}.HEIC`;
+      }
+      if (stopFlag || e.i >= total) {
+        clearInterval(timer);
+        e.running = false; st.phase = "ready";
+        log(`Fertig: ${e.stats.copied} kopiert, ${e.stats.skipped} übersprungen, ${e.stats.missing} nicht auf dem iPhone.`);
+      }
+    }, 80);
+  }
+  async function handle(path, body) {
+    const [p, q] = path.split("?");
+    await new Promise((r) => setTimeout(r, 60));
+    switch (p) {
+      case "/api/status": {
+        const since = Number(new URLSearchParams(q).get("since")) || 0;
+        return { ...st, logs: logs.slice(since), logIndex: logs.length,
+                 defaultTarget: "C:\\Users\\Du\\Pictures\\iPhone Export" };
+      }
+      case "/api/connect":
+        st.phase = "connecting"; log("Verbinde mit iPhone … (Demo)");
+        setTimeout(() => {
+          lib = build();
+          st.device = { name: "Demo-iPhone", ios: "18.1", media: 3172 };
+          st.phase = "ready"; log("Datenbank geladen: 3.172 Medien.");
+        }, 1400);
+        return { ok: true };
+      case "/api/library": return lib;
+      case "/api/export":
+        if (!body.ids.length) return { ok: false, error: "Bitte mindestens ein Album oder eine Person auswählen." };
+        runExport(body); return { ok: true };
+      case "/api/stop": stopFlag = true; return { ok: true };
+      case "/api/pick-folder":
+        alert("In der Online-Demo gibt es keinen Ordnerdialog. Im echten Tool öffnet sich hier der Windows-Ordnerdialog.");
+        return { path: null };
+      case "/api/open-folder":
+        alert("In der Online-Demo wurde nichts kopiert. Im echten Tool öffnet sich hier der Zielordner.");
+        return { ok: true };
+    }
+    return { ok: true };
+  }
+  return { handle };
+})() : null;
+
+function demoThumb(h) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><linearGradient id="g" x2="1" y2="1">` +
+    `<stop offset="0" stop-color="hsl(${h},70%,66%)"/><stop offset="1" stop-color="hsl(${(h + 60) % 360},60%,36%)"/></linearGradient></defs>` +
+    `<rect width="100" height="100" fill="url(#g)"/><circle cx="72" cy="28" r="12" fill="hsl(${h},90%,90%)"/>` +
+    `<path d="M0 80 L30 50 L55 72 L75 55 L100 78 V100 H0z" fill="hsl(${(h + 180) % 360},35%,24%)" opacity=".7"/></svg>`;
+  return "data:image/svg+xml," + encodeURIComponent(svg);
+}
+const thumbSrc = (id) => DEMO ? demoThumb(id) : `/api/thumb?id=${id}&t=${encodeURIComponent(TOKEN)}`;
+if (DEMO) { $("demoBanner").hidden = false; document.title = "Demo · iPhone Foto-Export"; }
+
 async function api(path, body) {
+  if (DEMO) return Demo.handle(path, body);
   const opts = { headers: { "X-Token": TOKEN } };
   if (body !== undefined) {
     opts.method = "POST";
@@ -649,7 +764,7 @@ function cardFor(g) {
   if (g.cover != null) {
     const img = document.createElement("img");
     img.alt = ""; img.loading = "lazy"; img.decoding = "async";
-    img.src = `/api/thumb?id=${g.cover}&t=${encodeURIComponent(TOKEN)}`;
+    img.src = thumbSrc(g.cover);
     img.onload = () => ini.remove();
     img.onerror = () => img.remove();
     thumb.append(img);
@@ -799,6 +914,7 @@ $("exportDlg").addEventListener("cancel", (e) => { if (S.phase === "exporting") 
 
 /* ---------- Lebenszeichen / Beenden ---------- */
 window.addEventListener("pagehide", () => {
+  if (DEMO) return;
   try { navigator.sendBeacon(`/api/bye?t=${encodeURIComponent(TOKEN)}`, "{}"); } catch {}
 });
 

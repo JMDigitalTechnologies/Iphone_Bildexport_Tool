@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.part
 iphone_fotos_fehler.log
+_site/

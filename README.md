@@ -1,5 +1,9 @@
 # iPhone Foto-Export (USB)
 
+**Projektseite und Live-Demo:** https://jmdigitaltechnologies.github.io/Iphone_Bildexport_Tool/
+· **Download:** [ZIP](https://github.com/JMDigitalTechnologies/Iphone_Bildexport_Tool/archive/refs/heads/main.zip)
+· Kostenlos und Open Source ([MIT-Lizenz](LICENSE))
+
 Exportiert Fotos und Videos vom iPhone in Ordner pro **Album**, pro **Person** und/oder nach **Jahr und Monat**:
 
 ```
@@ -44,4 +48,16 @@ python iphone_fotos.py --datum 2025 --datum 2024-12      (ganzes Jahr / einzelne
 python iphone_fotos.py --datum ALLE                      (komplette Mediathek nach Datum)
 ```
 
-Voraussetzungen (bereits installiert): Python 3.12, `pymobiledevice3`, iTunes (Apple Mobile Device Service).
+## Voraussetzungen
+- Windows 10/11
+- [Python 3.10+](https://www.python.org/downloads/windows/) (beim Installieren „Add python.exe to PATH“ anhaken)
+- App „Apple Geräte“ oder iTunes (liefert den USB-Treiber fürs iPhone)
+- `pymobiledevice3` wird beim ersten Start automatisch installiert (`requirements.txt`)
+
+## Projektseite (GitHub Pages)
+Die Seite liegt in `site/`. Die Live-Demo ist `ui.html` im Demo-Modus: Wird die Datei nicht vom lokalen
+Tool ausgeliefert, simuliert sie ein iPhone mit Beispieldaten. Der Workflow `.github/workflows/pages.yml`
+baut beides bei jedem Push auf `main` und veröffentlicht es.
+
+## Lizenz
+MIT, siehe [LICENSE](LICENSE). Kein Produkt von Apple; iPhone ist eine Marke der Apple Inc.
