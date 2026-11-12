@@ -133,10 +133,15 @@ class Asset:
 
 @dataclass
 class Group:
-    kind: str           # "album" oder "person"
+    kind: str           # "album", "person" oder "month"
     key: int
     title: str
     asset_pks: list[int] = field(default_factory=list)
+    folder: str = ""    # relativer Zielordner (leer = Standard aus kind + title)
+
+
+MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+          "Juli", "August", "September", "Oktober", "November", "Dezember"]
 
 
 class PhotoLibrary:
@@ -219,6 +224,27 @@ class PhotoLibrary:
                 g.asset_pks.append(r["ASSET"])
         return sorted(groups.values(), key=lambda g: g.title.lower())
 
+    # --- Nach Datum ------------------------------------------------------------
+    def months(self) -> list[Group]:
+        """Alle Medien der Mediathek (DCIM) nach Aufnahmemonat, neueste zuerst.
+        key = JJJJMM, 0 = ohne Datum."""
+        groups: dict[int, Group] = {}
+        for a in self.assets.values():
+            if not a.directory.upper().startswith("DCIM"):
+                continue  # z.B. geteilte Alben, liegen nicht in der Mediathek
+            if a.created:
+                t = time.localtime(a.created)
+                key = t.tm_year * 100 + t.tm_mon
+                title = f"{MONTHS[t.tm_mon - 1]} {t.tm_year}"
+                folder = f"Nach Datum/{t.tm_year}/{t.tm_mon:02d} {MONTHS[t.tm_mon - 1]}"
+            else:
+                key, title, folder = 0, "Ohne Datum", "Nach Datum/Ohne Datum"
+            g = groups.setdefault(key, Group("month", key, title, folder=folder))
+            g.asset_pks.append(a.pk)
+        for g in groups.values():
+            g.asset_pks.sort(key=lambda pk: self.assets[pk].created or 0)
+        return sorted(groups.values(), key=lambda g: g.key, reverse=True)
+
     def close(self):
         self.con.close()
 
@@ -283,8 +309,11 @@ class Exporter:
     def run(self, groups: list[Group]):
         jobs = []
         for g in groups:
-            sub = "Alben" if g.kind == "album" else "Personen"
-            folder = self.opts.target / sub / safe_name(g.title)
+            if g.folder:
+                folder = self.opts.target.joinpath(*(safe_name(p) for p in g.folder.split("/")))
+            else:
+                sub = "Alben" if g.kind == "album" else "Personen"
+                folder = self.opts.target / sub / safe_name(g.title)
             for pk in g.asset_pks:
                 jobs.append((folder, self.lib.assets[pk]))
 
@@ -382,6 +411,8 @@ class WebApp:
                 groups[f"a{g.key}"] = g
             for i, g in enumerate(lib.people()):
                 groups[f"p{i}"] = g
+            for g in lib.months():
+                groups[f"m{g.key}"] = g
             with self.lock:
                 self.phone, self.lib, self.groups = phone, lib, groups
                 self.thumbs.clear()
@@ -406,14 +437,18 @@ class WebApp:
             }
 
     def library(self) -> dict:
-        out = {"albums": [], "people": []}
+        out = {"albums": [], "people": [], "months": []}
         if not self.lib:
             return out
+        bucket = {"album": "albums", "person": "people", "month": "months"}
         for gid, g in self.groups.items():
             assets = [self.lib.assets[pk] for pk in g.asset_pks]
             cover = max(assets, key=lambda a: a.created or 0).pk if assets else None
             item = {"id": gid, "title": g.title, "count": len(assets), "cover": cover}
-            out["albums" if g.kind == "album" else "people"].append(item)
+            if g.kind == "month":
+                item["year"] = g.key // 100 or None
+                item["label"] = MONTHS[g.key % 100 - 1] if g.key else "Ohne Datum"
+            out[bucket[g.kind]].append(item)
         return out
 
     def thumb(self, pk: int) -> bytes | None:
@@ -624,10 +659,12 @@ def run_web(port: int = 0, token: str | None = None, open_browser: bool = True, 
 
 def run_cli(argv):
     import argparse
-    p = argparse.ArgumentParser(description="iPhone-Fotos nach Alben/Personen exportieren")
-    p.add_argument("--list", action="store_true", help="Alben und Personen anzeigen")
+    p = argparse.ArgumentParser(description="iPhone-Fotos nach Alben/Personen/Datum exportieren")
+    p.add_argument("--list", action="store_true", help="Alben, Personen und Monate anzeigen")
     p.add_argument("--album", action="append", default=[], help="Albumname (mehrfach möglich, 'ALLE' für alle)")
     p.add_argument("--person", action="append", default=[], help="Personenname (mehrfach möglich, 'ALLE' für alle)")
+    p.add_argument("--datum", action="append", default=[],
+                   help="Jahr (2025) oder Monat (2025-07), mehrfach möglich, 'ALLE' für alle")
     p.add_argument("--ziel", default=str(Path.home() / "Pictures" / "iPhone Export"))
     p.add_argument("--ohne-live", action="store_true", help="Live-Photo-Videos nicht mitnehmen")
     p.add_argument("--bearbeitet", action="store_true", help="Bearbeitete Versionen zusätzlich speichern")
@@ -636,16 +673,33 @@ def run_cli(argv):
     phone = IPhone()
     print(f"Verbunden: {phone.name} (iOS {phone.ios})")
     lib = load_library(phone, Path(tempfile.mkdtemp(prefix="iphone_fotos_")))
-    albums, people = lib.albums(), lib.people()
+    albums, people, months = lib.albums(), lib.people(), lib.months()
 
-    if a.list or not (a.album or a.person):
+    if a.list or not (a.album or a.person or a.datum):
         print(f"\nAlben ({len(albums)}):")
         for g in albums:
             print(f"  {g.title}  ({len(g.asset_pks)})")
         print(f"\nPersonen ({len(people)}):")
         for g in people:
             print(f"  {g.title}  ({len(g.asset_pks)})")
+        print(f"\nMonate ({len(months)}):")
+        for g in months:
+            code = f"{g.key // 100}-{g.key % 100:02d}" if g.key else "-"
+            print(f"  {code}  {g.title}  ({len(g.asset_pks)})")
         return
+
+    def pick_dates(values):
+        if any(v.upper() == "ALLE" for v in values):
+            return months
+        found = []
+        for v in values:
+            m = re.fullmatch(r"(\d{4})(?:-(\d{1,2}))?", v.strip())
+            hits = [g for g in months if m and g.key // 100 == int(m[1])
+                    and (m[2] is None or g.key % 100 == int(m[2]))]
+            if not hits:
+                print(f"Nicht gefunden: {v}")
+            found += [g for g in hits if g not in found]
+        return found
 
     def pick(groups, names):
         if any(n.upper() == "ALLE" for n in names):
@@ -656,7 +710,7 @@ def run_cli(argv):
             print(f"Nicht gefunden: {n}")
         return found
 
-    groups = pick(albums, a.album) + pick(people, a.person)
+    groups = pick(albums, a.album) + pick(people, a.person) + pick_dates(a.datum)
     opts = Options(Path(a.ziel), not a.ohne_live, a.bearbeitet, True)
 
     def progress(i, total, name):
@@ -675,6 +729,8 @@ if __name__ == "__main__":
     else:
         try:
             run_web()
+        except KeyboardInterrupt:
+            print("Beendet.")
         except Exception:
             # pythonw hat keine Konsole -> Fehler in Datei schreiben
             Path(__file__).with_name("iphone_fotos_fehler.log").write_text(traceback.format_exc(), "utf-8")

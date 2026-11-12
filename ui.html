@@ -207,6 +207,12 @@ main { flex: 1; width: 100%; max-width: 1200px; margin: 0 auto; padding: var(--s
 .title { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .count { color: var(--text-2); font-size: var(--fs-sm); }
 
+.years { display: grid; gap: var(--space-6); }
+.year-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); flex-wrap: wrap; }
+.year-head h3 { font-size: var(--fs-xl); letter-spacing: -.01em; line-height: 1.2; }
+.year-head .count { margin-right: auto; }
+.month .thumb .initials { font-size: 1.5rem; }
+
 .empty { text-align: center; padding: var(--space-7) var(--space-4); color: var(--text-2); display: grid; gap: var(--space-2); justify-items: center; }
 .empty svg { width: 40px; height: 40px; opacity: .6; }
 .empty b { color: var(--text); font-size: var(--fs-lg); }
@@ -348,6 +354,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
       <div class="tabs" role="tablist" aria-label="Sortierung">
         <button class="tab" role="tab" id="tab-albums" aria-controls="grid" aria-selected="true" data-tab="albums" type="button">Alben <span class="badge" id="countAlbums">0</span></button>
         <button class="tab" role="tab" id="tab-people" aria-controls="grid" aria-selected="false" data-tab="people" tabindex="-1" type="button">Personen <span class="badge" id="countPeople">0</span></button>
+        <button class="tab" role="tab" id="tab-months" aria-controls="grid" aria-selected="false" data-tab="months" tabindex="-1" type="button">Datum <span class="badge" id="countMonths">0</span></button>
       </div>
       <div class="search">
         <label for="searchInput" class="sr-only">Suchen</label>
@@ -531,10 +538,11 @@ function renderLog() {
 /* ---------- Bibliothek ---------- */
 async function loadLibrary() {
   S.lib = await api("/api/library");
-  const valid = new Set([...S.lib.albums, ...S.lib.people].map((g) => g.id));
+  const valid = new Set([...S.lib.albums, ...S.lib.people, ...S.lib.months].map((g) => g.id));
   for (const id of [...S.selected]) if (!valid.has(id)) S.selected.delete(id);
   $("countAlbums").textContent = nf.format(S.lib.albums.length);
   $("countPeople").textContent = nf.format(S.lib.people.length);
+  $("countMonths").textContent = nf.format(S.lib.months.length);
   $("welcome").hidden = true;
   $("library").hidden = false;
   $("actionbar").hidden = false;
@@ -552,15 +560,28 @@ function visibleItems() {
 function renderGrid() {
   const grid = $("grid");
   const items = visibleItems();
-  grid.className = "grid" + (S.tab === "people" ? " people" : "");
   grid.setAttribute("aria-labelledby", "tab-" + S.tab);
-  grid.replaceChildren(...items.map(cardFor));
+  if (S.tab === "months") {
+    grid.className = "years";
+    const byYear = new Map();
+    for (const g of items) {
+      const y = g.year ?? "Ohne Datum";
+      if (!byYear.has(y)) byYear.set(y, []);
+      byYear.get(y).push(g);
+    }
+    grid.replaceChildren(...[...byYear].map(([year, gs]) => yearSection(year, gs)));
+  } else {
+    grid.className = "grid" + (S.tab === "people" ? " people" : "");
+    grid.replaceChildren(...items.map(cardFor));
+  }
   const empty = $("empty");
   if (items.length) { empty.hidden = true; return; }
   empty.hidden = false;
   if (S.query) {
     empty.innerHTML = '<svg aria-hidden="true"><use href="#i-search"/></svg><b>Keine Treffer</b><span></span>';
     empty.lastChild.textContent = `Nichts gefunden für „${S.query}“.`;
+  } else if (S.tab === "months") {
+    empty.innerHTML = '<svg aria-hidden="true"><use href="#i-camera"/></svg><b>Keine Fotos gefunden</b><span>In der Mediathek des iPhones liegen keine Fotos oder Videos.</span>';
   } else if (S.tab === "people") {
     empty.innerHTML = '<svg aria-hidden="true"><use href="#i-people"/></svg><b>Keine benannten Personen</b>' +
       "<span>Gib Personen in der Fotos-App einen Namen (Alben → Personen) und lade dann neu.</span>";
@@ -569,14 +590,52 @@ function renderGrid() {
   }
 }
 
+function yearSection(year, gs) {
+  const sec = document.createElement("section");
+  sec.setAttribute("aria-label", String(year));
+  const head = document.createElement("div");
+  head.className = "year-head";
+  const h = document.createElement("h3"); h.textContent = year;
+  const c = document.createElement("span"); c.className = "count";
+  const total = gs.reduce((n, g) => n + g.count, 0);
+  c.textContent = `${gs.length} ${gs.length === 1 ? "Monat" : "Monate"} · ${nf.format(total)} Medien`;
+  const btn = document.createElement("button");
+  btn.type = "button"; btn.className = "btn btn-ghost";
+  const allSelected = () => gs.every((g) => S.selected.has(g.id));
+  sec._refresh = () => {
+    const all = allSelected();
+    btn.textContent = all ? "Jahr abwählen" : "Ganzes Jahr";
+    btn.setAttribute("aria-label", `${all ? "Jahr abwählen" : "Ganzes Jahr auswählen"}: ${year}`);
+  };
+  sec._refresh();
+  btn.onclick = () => {
+    const all = allSelected();
+    gs.forEach((g) => (all ? S.selected.delete(g.id) : S.selected.add(g.id)));
+    sec.querySelectorAll(".card input").forEach((i) => (i.checked = !all));
+    sec._refresh(); updateSummary();
+  };
+  head.append(h, c, btn);
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  grid.append(...gs.map(cardFor));
+  sec.append(head, grid);
+  return sec;
+}
+
 function cardFor(g) {
+  const isMonth = S.tab === "months";
+  const name = isMonth ? g.label : g.title;
   const label = document.createElement("label");
-  label.className = "card" + (S.tab === "people" ? " person" : "");
+  label.className = "card" + (S.tab === "people" ? " person" : "") + (isMonth ? " month" : "");
   const cb = document.createElement("input");
   cb.type = "checkbox";
   cb.checked = S.selected.has(g.id);
   cb.setAttribute("aria-label", `${g.title}, ${nf.format(g.count)} Medien`);
-  cb.onchange = () => { cb.checked ? S.selected.add(g.id) : S.selected.delete(g.id); updateSummary(); };
+  cb.onchange = () => {
+    cb.checked ? S.selected.add(g.id) : S.selected.delete(g.id);
+    updateSummary();
+    label.closest("section")?._refresh?.(); // Jahres-Button aktualisieren
+  };
 
   const thumb = document.createElement("div");
   thumb.className = "thumb";
@@ -585,7 +644,7 @@ function cardFor(g) {
   const ini = document.createElement("span");
   ini.className = "initials";
   ini.setAttribute("aria-hidden", "true");
-  ini.textContent = initials(g.title);
+  ini.textContent = isMonth ? name.slice(0, 3) : initials(g.title);
   thumb.append(ini);
   if (g.cover != null) {
     const img = document.createElement("img");
@@ -604,7 +663,7 @@ function cardFor(g) {
 
   const meta = document.createElement("span");
   meta.className = "meta";
-  const t = document.createElement("span"); t.className = "title"; t.textContent = g.title; t.title = g.title;
+  const t = document.createElement("span"); t.className = "title"; t.textContent = name; t.title = g.title;
   const c = document.createElement("span"); c.className = "count"; c.textContent = `${nf.format(g.count)} ${g.count === 1 ? "Medium" : "Medien"}`;
   meta.append(t, c);
   label.append(meta);
@@ -613,16 +672,18 @@ function cardFor(g) {
 
 function selectedGroups() {
   if (!S.lib) return [];
-  return [...S.lib.albums, ...S.lib.people].filter((g) => S.selected.has(g.id));
+  return [...S.lib.albums, ...S.lib.people, ...S.lib.months].filter((g) => S.selected.has(g.id));
 }
 
 function updateSummary() {
   const gs = selectedGroups();
-  const a = gs.filter((g) => g.id[0] === "a").length, p = gs.length - a;
+  const n = (k) => gs.filter((g) => g.id[0] === k).length;
+  const a = n("a"), p = n("p"), m = n("m");
   const files = gs.reduce((n, g) => n + g.count, 0);
   const parts = [];
   if (a) parts.push(`${a} ${a === 1 ? "Album" : "Alben"}`);
   if (p) parts.push(`${p} ${p === 1 ? "Person" : "Personen"}`);
+  if (m) parts.push(`${m} ${m === 1 ? "Monat" : "Monate"}`);
   $("selSummary").textContent = parts.length ? parts.join(" · ") : "Nichts ausgewählt";
   $("selDetail").textContent = parts.length ? `${nf.format(files)} Fotos & Videos` : "Wähle Alben oder Personen aus";
   $("exportBtn").disabled = !gs.length || S.phase !== "ready";
