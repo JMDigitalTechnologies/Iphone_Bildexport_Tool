@@ -45,8 +45,9 @@ Bei einem Startfehler steht der Grund in `iphone_fotos_fehler.log`.
   bleiben bei JPG/PNG/WebP/AVIF erhalten (TIFF: Datum und Kamera, ohne GPS). Das HEIC-Original kann
   zusätzlich behalten werden. Die Umwandlung läuft parallel, die Übertragung wird dadurch kaum langsamer.
   Kommandozeile: `--format jpg --qualitaet 90 [--heic-behalten]`.
-- **Videos** werden standardmäßig mit exportiert; über die Option „Videos exportieren“ (bzw. `--ohne-videos`)
-  lassen sie sich weglassen. Live-Photo-Clips hängen an der eigenen Option „Live-Photo-Videos“.
+- **Was exportieren?** In den Optionen wählbar: *Fotos & Videos* (Standard), *Nur Fotos* oder *Nur Videos*
+  (Kommandozeile: `--nur-fotos` bzw. `--nur-videos`). Live-Photo-Clips gehören zu den Fotos und hängen
+  an der eigenen Option „Live-Photo-Videos“.
 - Ein Foto in mehreren Alben/Personen wird in jeden Ordner kopiert.
 - „Vorhandene überspringen“ ist an, ein abgebrochener Export kann einfach neu gestartet werden.
 - Dateidatum = Aufnahmedatum.

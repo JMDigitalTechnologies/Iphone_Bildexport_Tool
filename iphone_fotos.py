@@ -484,7 +484,7 @@ class Options:
     edited: bool = False
     skip_existing: bool = True
     icloud: ICloudFolder | None = None   # fehlende Originale aus iCloud für Windows holen
-    videos: bool = True                  # Videos (nicht Live-Photo-Clips) mit exportieren
+    media: str = "all"                   # "all" = Fotos und Videos, "photos" = nur Fotos, "videos" = nur Videos
     convert: str | None = None           # HEIC live umwandeln in dieses Format (Schlüssel aus CONVERT_FORMATS)
     quality: int = 90                    # Qualität für JPG/WebP/AVIF/JPEG 2000
     keep_heic: bool = False              # HEIC-Original zusätzlich behalten
@@ -771,12 +771,12 @@ class Exporter:
                 folder = self.opts.target / sub / safe_name(g.title)
             for pk in g.asset_pks:
                 a = self.lib.assets[pk]
-                if a.is_video and not self.opts.videos:
+                if (self.opts.media == "photos" and a.is_video) or (self.opts.media == "videos" and not a.is_video):
                     continue
                 jobs.append((folder, a))
 
         total = len(jobs)
-        what = "Fotos/Videos" if self.opts.videos else "Fotos (ohne Videos)"
+        what = {"photos": "Fotos (ohne Videos)", "videos": "Videos (ohne Fotos)"}.get(self.opts.media, "Fotos/Videos")
         self.log(f"{total} {what} in {len(groups)} Ordnern werden exportiert …")
         s = self.stats  # wird live aktualisiert (für die Fortschrittsanzeige)
         s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0, converted=0, convFailed=0)
@@ -976,7 +976,8 @@ class WebApp:
             return f"Zielordner kann nicht angelegt werden: {e}"
         opts = Options(target, bool(body.get("live", True)), bool(body.get("edited", False)),
                        bool(body.get("skip", True)))
-        opts.videos = bool(body.get("videos", True))
+        media = body.get("media") or ("all" if body.get("videos", True) else "photos")
+        opts.media = media if media in ("all", "photos", "videos") else "all"
         conv = body.get("convert") or None
         if conv:
             if conv not in {f["id"] for f in converter_info()["formats"]}:
@@ -1188,7 +1189,10 @@ def run_cli(argv):
     p.add_argument("--ziel", default=str(Path.home() / "Pictures" / "iPhone Export"))
     p.add_argument("--ohne-live", action="store_true", help="Live-Photo-Videos nicht mitnehmen")
     p.add_argument("--bearbeitet", action="store_true", help="Bearbeitete Versionen zusätzlich speichern")
-    p.add_argument("--ohne-videos", action="store_true", help="Nur Fotos exportieren, Videos weglassen")
+    medien = p.add_mutually_exclusive_group()
+    medien.add_argument("--ohne-videos", "--nur-fotos", dest="nur_fotos", action="store_true",
+                        help="Nur Fotos exportieren, Videos weglassen")
+    medien.add_argument("--nur-videos", action="store_true", help="Nur Videos exportieren, Fotos weglassen")
     p.add_argument("--format", choices=list(CONVERT_FORMATS), help="HEIC live in dieses Format umwandeln")
     p.add_argument("--qualitaet", type=int, default=90, help="Qualität 10–100 für JPG/WebP/AVIF/JPEG 2000")
     p.add_argument("--heic-behalten", action="store_true", help="Bei --format das HEIC-Original zusätzlich behalten")
@@ -1238,7 +1242,7 @@ def run_cli(argv):
 
     groups = pick(albums, a.album) + pick(people, a.person) + pick_dates(a.datum)
     opts = Options(Path(a.ziel), not a.ohne_live, a.bearbeitet, True)
-    opts.videos = not a.ohne_videos
+    opts.media = "photos" if a.nur_fotos else "videos" if a.nur_videos else "all"
     if a.format:
         info = converter_info()
         if a.format not in {f["id"] for f in info["formats"]}:

@@ -293,6 +293,14 @@ dialog { overflow-x: hidden; }
 .range-row input[type=range] { flex: 1; accent-color: var(--accent); min-height: var(--tap); }
 .range-row output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .option.compact { padding: var(--space-2) 0; }
+fieldset.option-block { border: 0; border-bottom: 1px solid var(--border); margin: 0 0 var(--space-1); min-width: 0; }
+fieldset.option-block legend { padding: 0; margin-bottom: var(--space-2); float: left; width: 100%; }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; background: var(--surface-2); border-radius: calc(var(--radius-sm) + 4px); clear: both; }
+.seg label { position: relative; cursor: pointer; }
+.seg input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.seg span { display: grid; place-items: center; min-height: 40px; padding: 0 var(--space-2); border-radius: var(--radius-sm); font-size: var(--fs-sm); font-weight: 600; color: var(--text-2); text-align: center; transition: background var(--dur) var(--ease), color var(--dur) var(--ease); }
+.seg input:checked + span { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.seg input:focus-visible + span { outline: 3px solid var(--accent-text); outline-offset: 1px; }
 .conv-line { font-size: var(--fs-sm); color: var(--text-2); margin-top: var(--space-1); }
 .stat { background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); display: grid; }
 .stat b { font-size: var(--fs-xl); font-variant-numeric: tabular-nums; line-height: 1.2; }
@@ -419,7 +427,15 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
     <summary class="btn btn-icon" title="Optionen" aria-label="Optionen"><svg aria-hidden="true"><use href="#i-sliders"/></svg></summary>
     <div class="options-panel" role="group" aria-label="Export-Optionen">
       <label class="option" id="optICloudRow"><input type="checkbox" id="optICloud" checked><span><b>Fehlende aus iCloud holen</b><small id="optICloudHint">Originale, die nicht auf dem iPhone liegen, aus dem Ordner von iCloud für Windows laden.</small></span></label>
-      <label class="option"><input type="checkbox" id="optVideos" checked><span><b>Videos exportieren</b><small>Videos aus den gewählten Alben, Personen und Monaten mitnehmen. Aus: nur Fotos.</small></span></label>
+      <fieldset class="option-block media-block">
+        <legend><b>Was exportieren?</b></legend>
+        <div class="seg" role="radiogroup" aria-label="Was exportieren">
+          <label><input type="radio" name="media" value="all" checked><span>Fotos &amp; Videos</span></label>
+          <label><input type="radio" name="media" value="photos"><span>Nur Fotos</span></label>
+          <label><input type="radio" name="media" value="videos"><span>Nur Videos</span></label>
+        </div>
+        <small id="mediaHint">Live-Photo-Clips gehören zu den Fotos und richten sich nach der Option „Live-Photo-Videos“.</small>
+      </fieldset>
       <label class="option"><input type="checkbox" id="optLive" checked><span><b>Live-Photo-Videos</b><small>Die kurzen .MOV-Clips der Live Photos mitnehmen.</small></span></label>
       <label class="option"><input type="checkbox" id="optEdited"><span><b>Bearbeitete Versionen</b><small>Zusätzlich als „…_bearbeitet.jpg“ speichern.</small></span></label>
       <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
@@ -538,7 +554,7 @@ const Demo = DEMO ? (() => {
   function runExport(body) {
     const all = [...lib.albums, ...lib.people, ...lib.months];
     const total = all.filter((g) => body.ids.includes(g.id))
-      .reduce((n, g) => n + g.count - (body.videos ? 0 : g.videos), 0);
+      .reduce((n, g) => n + (body.media === "videos" ? g.videos : body.media === "photos" ? g.count - g.videos : g.count), 0);
     const e = st.export = { running: true, i: 0, total, name: "", target: body.target, cancelled: false, error: null,
                             icloudUsed: body.icloud, convert: body.convert || null,
                             stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0, converted: 0, convFailed: 0 } };
@@ -872,9 +888,9 @@ function updateSummary() {
   const gs = selectedGroups();
   const n = (k) => gs.filter((g) => g.id[0] === k).length;
   const a = n("a"), p = n("p"), m = n("m");
-  const withVideos = $("optVideos").checked;
+  const media = currentMedia();
   const vids = gs.reduce((n, g) => n + (g.videos || 0), 0);
-  const files = gs.reduce((n, g) => n + g.count, 0) - (withVideos ? 0 : vids);
+  const photos = gs.reduce((n, g) => n + g.count, 0) - vids;
   const parts = [];
   if (a) parts.push(`${a} ${a === 1 ? "Album" : "Alben"}`);
   if (p) parts.push(`${p} ${p === 1 ? "Person" : "Personen"}`);
@@ -882,9 +898,13 @@ function updateSummary() {
   $("selSummary").textContent = parts.length ? parts.join(" · ") : "Nichts ausgewählt";
   const conv = (S.formats || []).find((x) => x.id === $("optConvert").value);
   $("selDetail").textContent = (!parts.length ? "Wähle Alben oder Personen aus"
-    : withVideos ? `${nf.format(files - vids)} Fotos · ${nf.format(vids)} Videos`
-    : `${nf.format(files)} Fotos (ohne Videos)`) + (parts.length && conv ? ` · HEIC → ${conv.name.split(" ")[0]}` : "");
-  $("exportBtn").disabled = !gs.length || S.phase !== "ready";
+    : media === "photos" ? `${nf.format(photos)} Fotos (ohne Videos)`
+    : media === "videos" ? `${nf.format(vids)} Videos (ohne Fotos)`
+    : `${nf.format(photos)} Fotos · ${nf.format(vids)} Videos`)
+    + (parts.length && conv && media !== "videos" ? ` · HEIC → ${conv.name.split(" ")[0]}` : "");
+  const nothing = parts.length && (media === "videos" ? vids === 0 : media === "photos" ? photos === 0 : false);
+  $("exportBtn").disabled = !gs.length || S.phase !== "ready" || !!nothing;
+  if (nothing) $("selDetail").textContent = media === "videos" ? "Keine Videos in der Auswahl" : "Keine Fotos in der Auswahl";
 }
 
 /* ---------- Tabs (mit Pfeiltasten) ---------- */
@@ -946,7 +966,20 @@ $("optQualityOut").textContent = $("optQuality").value;
 $("optKeepHeic").checked = store.get("keepHeic", false);
 $("optKeepHeic").onchange = () => store.set("keepHeic", $("optKeepHeic").checked);
 
-for (const [id, key] of [["optICloud", "icloud"], ["optVideos", "videos"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
+function currentMedia() {
+  const r = document.querySelector('input[name="media"]:checked');
+  return r ? r.value : "all";
+}
+{
+  const saved = store.get("media", store.get("videos", true) === false ? "photos" : "all");
+  const r = document.querySelector(`input[name="media"][value="${saved}"]`);
+  if (r) r.checked = true;
+  document.querySelectorAll('input[name="media"]').forEach((el) => {
+    el.onchange = () => { store.set("media", currentMedia()); updateSummary(); };
+  });
+}
+
+for (const [id, key] of [["optICloud", "icloud"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
   $(id).checked = store.get(key, $(id).checked);
   $(id).onchange = () => { store.set(key, $(id).checked); updateSummary(); };
 }
@@ -958,7 +991,7 @@ $("exportBtn").onclick = async () => {
   const body = {
     ids: [...S.selected], target: $("targetInput").value.trim(),
     live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
-    videos: $("optVideos").checked,
+    media: currentMedia(),
     convert: $("optConvert").disabled ? "" : $("optConvert").value,
     quality: +$("optQuality").value, keepHeic: $("optKeepHeic").checked,
     icloud: $("optICloud").checked && !$("optICloud").disabled,
