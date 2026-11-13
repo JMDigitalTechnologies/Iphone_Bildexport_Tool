@@ -32,6 +32,7 @@ DB_DIR = "/PhotoData"
 DB_FILES = ["Photos.sqlite", "Photos.sqlite-wal", "Photos.sqlite-shm"]
 CHUNK = 4 * 1024 * 1024
 VIDEO_EXT = {".MOV", ".MP4", ".M4V", ".AVI", ".3GP"}
+AFC_TIMEOUT = 60  # Sekunden pro iPhone-Befehl
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +62,7 @@ class IPhone:
             return lockdown, afc
 
         try:
-            self.lockdown, self.afc = self._run(_connect())
+            self.lockdown, self.afc = self._run(_connect(), timeout=180)  # Zeit für "Vertrauen"-Dialog
         except Exception as e:
             self._loop.call_soon_threadsafe(self._loop.stop)
             raise RuntimeError(
@@ -75,8 +76,14 @@ class IPhone:
         self.name = values.get("DeviceName") or "iPhone"
         self.ios = values.get("ProductVersion") or "?"
 
-    def _run(self, coro, timeout=None):
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout)
+    def _run(self, coro, timeout=AFC_TIMEOUT):
+        """Gerätebefehl ausführen; nach `timeout` Sekunden abbrechen statt ewig zu warten."""
+        fut = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return fut.result(timeout)
+        except TimeoutError:
+            fut.cancel()
+            raise TimeoutError("iPhone antwortet nicht (Zeitüberschreitung) – entsperrt und verbunden?")
 
     def exists(self, path: str) -> bool:
         try:
@@ -96,16 +103,19 @@ class IPhone:
         written = 0
         handle = self._run(self.afc.fopen(src, "r"))
         try:
-            with open(tmp, "wb") as out:
+            with open(tmp, "wb") as out:  # bei Fehler/Zeitüberschreitung bleibt keine Teildatei liegen (s.u.)
                 while True:
                     data = self._run(self.afc.fread(handle, CHUNK))
                     if not data:
                         break
                     out.write(data)
                     written += len(data)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
         finally:
             try:
-                self._run(self.afc.fclose(handle))
+                self._run(self.afc.fclose(handle), timeout=10)
             except Exception:
                 pass
         os.replace(tmp, dst)
@@ -294,6 +304,38 @@ ICLOUD_APP = r"shell:AppsFolder\AppleInc.iCloud_nzyj5cx40ttqa!iCloud"  # iCloud 
 ERROR_CLOUD_PROVIDER_NOT_RUNNING = 362  # Windows: „Der Clouddateianbieter wird nicht ausgeführt“
 
 
+ICLOUD_STALL_SECONDS = 120        # so lange darf iCloud ohne Daten bleiben (plus Zuschlag nach Größe)
+ICLOUD_MIN_RATE = 256 * 1024      # Zuschlag: 1 s je 256 KB Dateigröße (große Videos laden erst komplett)
+
+
+class ICloudStalled(OSError):
+    """iCloud für Windows hat eine Datei nicht geliefert (Zeitüberschreitung)."""
+
+
+def cancel_thread_io(native_tid: int | None):
+    """Blockierendes Lesen eines Threads abbrechen (Windows: CancelSynchronousIo)."""
+    if not native_tid or os.name != "nt":
+        return
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    THREAD_TERMINATE = 0x0001  # von CancelSynchronousIo verlangtes Zugriffsrecht
+    h = k32.OpenThread(THREAD_TERMINATE, False, native_tid)
+    if h:
+        k32.CancelSynchronousIo(h)
+        k32.CloseHandle(h)
+
+
+def restart_icloud_photos():
+    """Den Fotos-Dienst von iCloud für Windows beenden und iCloud neu starten (nur auf Knopfdruck)."""
+    import subprocess
+    subprocess.run(["taskkill", "/IM", "iCloudPhotos.exe", "/F"], capture_output=True,
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    try:
+        os.startfile(ICLOUD_APP)
+    except OSError:
+        pass
+
+
 def find_icloud_photos_dir() -> Path | None:
     """Ordner von „iCloud Fotos“ aus iCloud für Windows suchen."""
     home = Path.home()
@@ -368,12 +410,17 @@ class Exporter:
         self.shared: dict = {}                   # wird vom WebApp mit dem Export-Status verknüpft
         self.resume_event = threading.Event()   # "Angemeldet – weiter" -> sofort neu prüfen
         self.skip_icloud = False                 # "Ohne iCloud fortfahren"
+        self.restart_icloud = False              # "iCloud neu starten"
+        self.failed_icloud: list[str] = []       # Dateien, die iCloud nicht geliefert hat
         self._probe_thread: threading.Thread | None = None
         self._probe_result: dict = {}
 
     def _listdir(self, path):
         if path not in self._dircache:
-            self._dircache[path] = self.phone.listdir(path)
+            names = self.phone.listdir(path)
+            if not names:
+                return names  # leer oder Fehler -> nicht cachen, beim nächsten Mal neu fragen
+            self._dircache[path] = names
         return self._dircache[path]
 
     def _on_device(self, a: Asset) -> bool:
@@ -381,13 +428,53 @@ class Exporter:
         return a.filename.upper() in names
 
     def _copy_local(self, src: Path, dst: Path, created: float | None):
-        """Datei vom PC kopieren (bei iCloud-Platzhaltern lädt Windows sie dabei herunter)."""
+        """Datei vom PC kopieren (bei iCloud-Platzhaltern lädt Windows sie dabei herunter).
+
+        Läuft in einem eigenen Thread mit Hänger-Erkennung: Kommen zu lange keine Daten,
+        wird das Lesen über Windows abgebrochen (CancelSynchronousIo), statt ewig zu warten."""
         tmp = dst.with_name(dst.name + ".part")
         try:
-            shutil.copyfile(src, tmp)
-        except BaseException:
-            tmp.unlink(missing_ok=True)
-            raise
+            size = src.stat().st_size
+        except OSError:
+            size = 0
+        stall_limit = ICLOUD_STALL_SECONDS + size / ICLOUD_MIN_RATE  # große Videos dürfen länger laden
+        st = {"bytes": 0, "done": False, "err": None, "tid": None}
+
+        def work():
+            st["tid"] = threading.get_native_id()
+            try:
+                with open(src, "rb") as fi, open(tmp, "wb") as fo:
+                    while True:
+                        b = fi.read(1 << 20)
+                        if not b:
+                            break
+                        fo.write(b)
+                        st["bytes"] += len(b)
+            except BaseException as e:
+                st["err"] = e
+            finally:
+                st["done"] = True
+
+        th = threading.Thread(target=work, daemon=True, name="icloud-copy")
+        th.start()
+        last, last_t, stalled = -1, time.time(), False
+        while not st["done"]:
+            th.join(1)
+            if st["bytes"] != last:
+                last, last_t = st["bytes"], time.time()
+            elif self.stop.is_set() or time.time() - last_t > stall_limit:
+                stalled = not self.stop.is_set()
+                cancel_thread_io(st["tid"])  # blockiertes Lesen abbrechen
+                th.join(15)
+                break
+        if not st["done"] or stalled or st["err"]:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if stalled or not st["done"]:
+                raise ICloudStalled(f"iCloud hat {src.name} nach {int(stall_limit)} s nicht geliefert")
+            raise st["err"]
         os.replace(tmp, dst)
         if created:
             os.utime(dst, (created, created))
@@ -399,6 +486,7 @@ class Exporter:
             res = self._probe_result = {}
 
             def work():
+                res["tid"] = threading.get_native_id()
                 try:
                     with open(path, "rb") as f:
                         f.read(1)
@@ -410,6 +498,10 @@ class Exporter:
             self._probe_thread = threading.Thread(target=work, daemon=True)
             self._probe_thread.start()
         self._probe_thread.join(timeout)
+        if self._probe_thread.is_alive():
+            cancel_thread_io(self._probe_result.get("tid"))  # hängenden Test-Lesezugriff abbrechen
+            self._probe_thread.join(5)
+            return "timeout"
         return self._probe_result.get("r", "timeout")
 
     def _set_waiting(self, reason: str | None):
@@ -435,8 +527,8 @@ class Exporter:
                 pass
         self._set_waiting(
             ("iCloud für Windows wurde gestartet. " if started else "iCloud für Windows antwortet nicht. ")
-            + "Bitte im iCloud-Fenster anmelden und „Fotos“ aktivieren. "
-              "Der Export geht automatisch weiter, sobald iCloud bereit ist.")
+            + "Bitte prüfen, ob du im iCloud-Fenster angemeldet bist und „Fotos“ aktiv ist – "
+              "oder „iCloud neu starten“ wählen. Der Export geht automatisch weiter, sobald iCloud bereit ist.")
         while not self.stop.is_set():
             if self.skip_icloud:
                 self._set_waiting(None)
@@ -447,6 +539,11 @@ class Exporter:
             self.resume_event.clear()
             if self.stop.is_set() or self.skip_icloud:
                 continue
+            if self.restart_icloud:
+                self.restart_icloud = False
+                self.log("iCloud für Windows wird neu gestartet …")
+                restart_icloud_photos()
+                time.sleep(8)
             if self._probe(sample, 15) in ("ok", "error"):
                 self._set_waiting(None)
                 self.log("iCloud ist bereit – der Export läuft weiter.")
@@ -475,10 +572,19 @@ class Exporter:
                 continue
             if not self._ensure_icloud(s_path):
                 return False  # ohne iCloud / abgebrochen -> als "nicht gefunden" zählen
+            self.shared["current"] = {"name": s_path.name, "source": "iCloud", "since": time.time()}
             for attempt in (1, 2):
                 try:
                     self._copy_local(s_path, dst, a.created)
                     self.stats["icloud"] += 1
+                    break
+                except ICloudStalled as e:
+                    # Datei auslassen (späterer Export holt sie nach); vor der nächsten Datei prüfen,
+                    # ob iCloud überhaupt noch reagiert -> sonst Warte-Hinweis statt Hängen.
+                    self.stats["failed"] += 1
+                    self.failed_icloud.append(s_path.name)
+                    self.log(f"{e} – übersprungen, wird beim nächsten Export erneut versucht.")
+                    self._icloud_state = None
                     break
                 except OSError as e:
                     if attempt == 1 and getattr(e, "winerror", None) == ERROR_CLOUD_PROVIDER_NOT_RUNNING:
@@ -487,6 +593,7 @@ class Exporter:
                             continue
                         return False
                     self.stats["failed"] += 1
+                    self.failed_icloud.append(s_path.name)
                     self.log(f"Fehler beim Laden aus iCloud ({s_path.name}): {e}")
                     break
         return True
@@ -551,6 +658,7 @@ class Exporter:
                 continue
             for src, dst_name in self._files_for(asset):
                 dst = folder / dst_name
+                self.shared["current"] = {"name": dst_name, "source": "iPhone", "since": time.time()}
                 if self.opts.skip_existing and dst.exists() and dst.stat().st_size > 0:
                     s["skipped"] += 1
                     continue
@@ -573,6 +681,9 @@ class Exporter:
         if s["missing"]:
             where = "weder auf dem iPhone noch im iCloud-Fotos-Ordner" if self.opts.icloud else "nicht auf dem iPhone"
             self.log(f"{s['missing']} Originale liegen {where}. Beispiele: " + ", ".join(self.missing_examples))
+        if self.failed_icloud:
+            self.log(f"{len(self.failed_icloud)} Dateien hat iCloud nicht geliefert (z.B. "
+                     + ", ".join(self.failed_icloud[:5]) + "). Ein erneuter Export versucht nur diese noch einmal.")
         self.log(f"Ziel: {self.opts.target}")
         return s
 
@@ -655,6 +766,7 @@ class WebApp:
                 "logs": self.logs[since:], "logIndex": len(self.logs),
                 "export": self.export, "defaultTarget": self.default_target,
                 "icloudDir": str(self.icloud_dir) if self.icloud_dir else None,
+                "now": time.time(),
             }
 
     def library(self) -> dict:
@@ -714,7 +826,7 @@ class WebApp:
             self.export = {"running": True, "i": 0, "total": 0, "name": "", "target": str(target),
                            "stats": {"copied": 0, "icloud": 0, "skipped": 0, "missing": 0, "failed": 0},
                            "cancelled": False, "error": None, "missingExamples": [], "icloudUsed": use_icloud,
-                           "waiting": None}
+                           "waiting": None, "current": None}
         self.stop_event.clear()
         threading.Thread(target=self._export, args=(groups, opts, use_icloud), daemon=True).start()
         return None
@@ -853,6 +965,8 @@ def run_web(port: int = 0, token: str | None = None, open_browser: bool = True, 
                 if ex:
                     if body.get("action") == "skip":
                         ex.skip_icloud = True
+                    elif body.get("action") == "restart":
+                        ex.restart_icloud = True
                     ex.resume_event.set()  # sofort neu prüfen
                 return self._send(200, {"ok": True})
             if u.path == "/api/pick-folder":

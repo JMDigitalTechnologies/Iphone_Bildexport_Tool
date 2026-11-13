@@ -446,6 +446,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
         <p id="dlgWaitText"></p>
         <div class="wait-actions">
           <button id="icloudGoBtn" class="btn btn-primary" type="button">Angemeldet – weiter</button>
+          <button id="icloudRestartBtn" class="btn" type="button">iCloud neu starten</button>
           <button id="icloudSkipBtn" class="btn" type="button">Ohne iCloud fortfahren</button>
         </div>
       </div>
@@ -663,7 +664,7 @@ async function poll() {
   if (st.device && (!S.lib || (prev === "connecting" && st.phase === "ready"))) await loadLibrary();
 
   // Export
-  if (st.export && (st.export.running || S.wasExporting)) renderExport(st.export);
+  if (st.export && (st.export.running || S.wasExporting)) renderExport(st.export, st.now);
   S.wasExporting = !!(st.export && st.export.running);
 
   setTimeout(poll, (st.phase === "connecting" || st.phase === "exporting") ? 500 : 2500);
@@ -905,7 +906,7 @@ $("exportBtn").onclick = async () => {
   setTimeout(poll, 200);
 };
 
-function renderExport(e) {
+function renderExport(e, now) {
   const dlg = $("exportDlg");
   if (!dlg.open) dlg.showModal();
   const pct = e.total ? Math.round((e.i / e.total) * 100) : 0;
@@ -930,6 +931,7 @@ function renderExport(e) {
     box.hidden = false;
     $("icloudGoBtn").disabled = false; $("icloudGoBtn").textContent = "Angemeldet – weiter";
     $("icloudSkipBtn").disabled = false;
+    $("icloudRestartBtn").disabled = false; $("icloudRestartBtn").textContent = "iCloud neu starten";
     $("icloudGoBtn").focus();
   } else if (!waiting) box.hidden = true;
   if (waiting) $("dlgWaitText").textContent = e.waiting;
@@ -941,7 +943,11 @@ function renderExport(e) {
     $("dlgSub").textContent = "Wartet auf die Anmeldung bei iCloud für Windows";
   } else if (!done) {
     $("dlgTitle").textContent = "Exportiere …";
-    $("dlgSub").textContent = e.name ? `Aktuell: ${e.name}` : "Vorbereiten …";
+    const c = e.current;
+    const secs = c && now ? Math.max(0, Math.round(now - c.since)) : 0;
+    $("dlgSub").textContent = c
+      ? `${c.source === "iCloud" ? "Lade aus iCloud" : "Kopiere vom iPhone"}: ${c.name}${secs >= 5 ? ` · ${secs} s` : ""}`
+      : (e.name ? `Aktuell: ${e.name}` : "Vorbereiten …");
     icon.className = "dlg-icon"; icon.innerHTML = '<span class="spinner" style="width:22px;height:22px"></span>';
   } else {
     $("dlgTitle").textContent = e.error ? "Export fehlgeschlagen" : e.cancelled ? "Export abgebrochen" : "Export fertig";
@@ -961,6 +967,12 @@ $("icloudGoBtn").onclick = async () => {
   b.disabled = true; b.textContent = "Prüfe iCloud …";
   await api("/api/icloud", { action: "retry" });
   setTimeout(() => { if (!$("dlgWait").hidden) { b.disabled = false; b.textContent = "Angemeldet – weiter"; } }, 20000);
+};
+$("icloudRestartBtn").onclick = async () => {
+  const b = $("icloudRestartBtn");
+  b.disabled = true; b.textContent = "Starte iCloud neu …";
+  await api("/api/icloud", { action: "restart" });
+  setTimeout(() => { b.disabled = false; b.textContent = "iCloud neu starten"; }, 20000);
 };
 $("icloudSkipBtn").onclick = async () => {
   $("icloudSkipBtn").disabled = true; $("icloudGoBtn").disabled = true;
