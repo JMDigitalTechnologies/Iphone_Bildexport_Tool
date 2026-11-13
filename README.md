@@ -45,6 +45,11 @@ Bei einem Startfehler steht der Grund in `iphone_fotos_fehler.log`.
   bleiben bei JPG/PNG/WebP/AVIF erhalten (TIFF: Datum und Kamera, ohne GPS). Das HEIC-Original kann
   zusätzlich behalten werden. Die Umwandlung läuft parallel, die Übertragung wird dadurch kaum langsamer.
   Kommandozeile: `--format jpg --qualitaet 90 [--heic-behalten]`.
+- **Schnell und parallel:** iPhone (3 gleichzeitige Übertragungen über USB) und iCloud (8 gleichzeitige
+  Downloads) laufen parallel, die HEIC-Umwandlung auf bis zu 8 Prozessorkernen. Fotos kommen zuerst,
+  große Videos zum Schluss. Das Export-Fenster zeigt Durchsatz, Dateien/s und Restzeit.
+  Aus iCloud geladene Dateien werden danach wieder auf „nur online“ gesetzt (Option, Standard an),
+  damit Laufwerk C: bei großen Exporten nicht vollläuft.
 - **Unterordner nach Ort** (Optionen, bzw. `--ort stadt|bundesland|land`): Alben und „Nach Datum“ bekommen
   Unterordner nach Stadt, Bundesland/Region oder Land, z. B. `Nach Datum\2025\07 Juli\Rom (Italien)`.
   Der Ort stammt vom iPhone selbst (dieselben Namen wie in der Fotos-App, keine Internetabfrage);

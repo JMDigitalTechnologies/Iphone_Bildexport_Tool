@@ -429,6 +429,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
     <summary class="btn btn-icon" title="Optionen" aria-label="Optionen"><svg aria-hidden="true"><use href="#i-sliders"/></svg></summary>
     <div class="options-panel" role="group" aria-label="Export-Optionen">
       <label class="option" id="optICloudRow"><input type="checkbox" id="optICloud" checked><span><b>Fehlende aus iCloud holen</b><small id="optICloudHint">Originale, die nicht auf dem iPhone liegen, aus dem Ordner von iCloud für Windows laden.</small></span></label>
+      <label class="option"><input type="checkbox" id="optRelease" checked><span><b>iCloud-Speicher danach freigeben</b><small>Aus iCloud geladene Dateien nach dem Kopieren wieder auf „nur online“ setzen, damit Laufwerk C: nicht vollläuft.</small></span></label>
       <fieldset class="option-block media-block">
         <legend><b>Was exportieren?</b></legend>
         <div class="seg" role="radiogroup" aria-label="Was exportieren">
@@ -452,6 +453,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
       <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
       <div class="option-block">
         <label for="optConvert"><b>HEIC live umwandeln</b><small id="optConvertHint">Fotos werden während der Übertragung in das gewählte Format umgewandelt. Aufnahmedatum, GPS und Farbprofil bleiben erhalten.</small></label>
+        <button id="installConvBtn" class="btn btn-primary" type="button" hidden>Jetzt installieren</button>
         <select id="optConvert" class="input">
           <option value="">Nicht umwandeln (HEIC-Original)</option>
         </select>
@@ -482,6 +484,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
     <div>
       <div class="bar" role="progressbar" id="dlgBar" aria-label="Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="dlgBarFill"></div></div>
       <div class="bar-label"><span id="dlgCount">0 / 0</span><span id="dlgPct">0 %</span></div>
+      <p class="conv-line" id="dlgSpeed" hidden></p>
       <p class="conv-line" id="dlgConv" hidden></p>
     </div>
     <div class="stats">
@@ -567,7 +570,7 @@ const Demo = DEMO ? (() => {
     const total = all.filter((g) => body.ids.includes(g.id))
       .reduce((n, g) => n + (body.media === "videos" ? g.videos : body.media === "photos" ? g.count - g.videos : g.count), 0);
     const e = st.export = { running: true, i: 0, total, name: "", target: body.target, cancelled: false, error: null,
-                            icloudUsed: body.icloud, convert: body.convert || null,
+                            icloudUsed: body.icloud, convert: body.convert || null, startedAt: Date.now() / 1000, active: 8,
                             stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0, converted: 0, convFailed: 0 } };
     st.phase = "exporting"; stopFlag = false;
     log(`${total} Fotos/Videos werden exportiert … (Demo)`);
@@ -583,6 +586,7 @@ const Demo = DEMO ? (() => {
           else if (body.icloud && e.i % 3) e.stats.icloud++;
           if (body.convert && e.i % 9 && !(e.i % 29 === 0)) e.stats.converted++;
           else e.stats.copied++;
+          e.stats.bytes = (e.stats.bytes || 0) + 2400000;
         }
         e.name = `IMG_${String(4000 + e.i).padStart(4, "0")}.HEIC`;
       }
@@ -599,7 +603,7 @@ const Demo = DEMO ? (() => {
     switch (p) {
       case "/api/status": {
         const since = Number(new URLSearchParams(q).get("since")) || 0;
-        return { ...st, logs: logs.slice(since), logIndex: logs.length,
+        return { ...st, now: Date.now() / 1000, logs: logs.slice(since), logIndex: logs.length,
                  defaultTarget: "C:\\Users\\Du\\Pictures\\iPhone Export",
                  icloudDir: "C:\\Users\\Du\\Pictures\\iCloud Photos\\Photos",
                  convert: { error: null, formats: [
@@ -690,15 +694,26 @@ async function poll() {
   const prev = S.phase;
   S.phase = st.phase;
   if (!$("targetInput").value) $("targetInput").value = store.get("target", st.defaultTarget);
-  if (st.convert && !S.convertFilled) {
-    S.convertFilled = true;
+  const convKey = st.convert ? JSON.stringify([st.convert.formats, st.convert.error, st.convert.installing]) : "";
+  if (st.convert && S.convertKey !== convKey) {
+    S.convertKey = convKey;
     S.formats = st.convert.formats;
     const sel = $("optConvert");
+    sel.length = 1;  // nur "Nicht umwandeln" behalten
     for (const f of st.convert.formats) {
       const o = document.createElement("option");
       o.value = f.id; o.textContent = f.name; sel.append(o);
     }
-    if (st.convert.error) { sel.disabled = true; $("optConvertHint").textContent = st.convert.error; }
+    sel.disabled = !!st.convert.error;
+    const ib = $("installConvBtn");
+    ib.hidden = !st.convert.error;
+    ib.disabled = !!st.convert.installing;
+    ib.textContent = st.convert.installing ? "Wird installiert … (1–2 Minuten)" : "Jetzt installieren";
+    $("optConvertHint").textContent = st.convert.installing
+      ? "Die Bildbibliothek wird installiert. Danach ist die Umwandlung sofort verfügbar."
+      : st.convert.error
+        ? "Für die Umwandlung fehlt eine Bildbibliothek (pillow-heif). Sie kann hier mit einem Klick installiert werden."
+        : "Fotos werden während der Übertragung in das gewählte Format umgewandelt. Aufnahmedatum, GPS und Farbprofil bleiben erhalten.";
     const saved = store.get("convert", "");
     if (st.convert.formats.some((f) => f.id === saved)) sel.value = saved;
     updateConvertUi();
@@ -971,6 +986,10 @@ function updateConvertUi() {
   $("optQualityOut").textContent = $("optQuality").value;
   updateSummary();
 }
+$("installConvBtn").onclick = async () => {
+  $("installConvBtn").disabled = true; $("installConvBtn").textContent = "Wird installiert … (1–2 Minuten)";
+  await api("/api/install-converter", {});
+};
 $("optConvert").onchange = () => { store.set("convert", $("optConvert").value); updateConvertUi(); };
 $("optQuality").value = store.get("quality", 90);
 $("optQuality").oninput = () => { $("optQualityOut").textContent = $("optQuality").value; store.set("quality", +$("optQuality").value); };
@@ -994,7 +1013,7 @@ function currentMedia() {
   });
 }
 
-for (const [id, key] of [["optICloud", "icloud"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
+for (const [id, key] of [["optICloud", "icloud"], ["optRelease", "releaseIcloud"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
   $(id).checked = store.get(key, $(id).checked);
   $(id).onchange = () => { store.set(key, $(id).checked); updateSummary(); };
 }
@@ -1008,6 +1027,7 @@ $("exportBtn").onclick = async () => {
     live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
     media: currentMedia(),
     placeLevel: $("optPlace").value,
+    releaseIcloud: $("optRelease").checked,
     convert: $("optConvert").disabled ? "" : $("optConvert").value,
     quality: +$("optQuality").value, keepHeic: $("optKeepHeic").checked,
     icloud: $("optICloud").checked && !$("optICloud").disabled,
@@ -1030,6 +1050,19 @@ function renderExport(e, now) {
   $("dlgPct").textContent = (done && !e.cancelled ? 100 : pct) + " %";
   $("stCopied").textContent = nf.format(e.stats.copied);
   $("stICloud").textContent = nf.format(e.stats.icloud || 0);
+  const elapsed = e.startedAt && now ? now - e.startedAt : 0;
+  $("dlgSpeed").hidden = !(elapsed > 3 && e.i > 0);
+  if (elapsed > 3 && e.i > 0) {
+    const mbps = (e.stats.bytes || 0) / 1e6 / elapsed;
+    const rate = e.i / elapsed;
+    const fmtDur = (sec) => sec >= 3600 ? `${Math.floor(sec / 3600)} h ${Math.round((sec % 3600) / 60)} min`
+      : sec >= 60 ? `${Math.round(sec / 60)} min` : `${Math.max(1, Math.round(sec))} s`;
+    const parts = [`${mbps.toLocaleString("de-DE", { maximumFractionDigits: 1 })} MB/s`,
+                   `${rate.toLocaleString("de-DE", { maximumFractionDigits: 1 })} Dateien/s`];
+    if (!done) parts.push(`noch ca. ${fmtDur((e.total - e.i) / rate)}`);
+    else parts.push(`Dauer ${fmtDur(elapsed)}`);
+    $("dlgSpeed").textContent = parts.join(" · ");
+  }
   const convName = e.convert && (S.formats || []).find((x) => x.id === e.convert);
   $("dlgConv").hidden = !e.convert;
   if (e.convert) {
@@ -1064,8 +1097,9 @@ function renderExport(e, now) {
     $("dlgTitle").textContent = "Exportiere …";
     const c = e.current;
     const secs = c && now ? Math.max(0, Math.round(now - c.since)) : 0;
+    const par = e.active > 1 ? ` (+${e.active - 1} parallel)` : "";
     $("dlgSub").textContent = c
-      ? `${c.source === "iCloud" ? "Lade aus iCloud" : "Kopiere vom iPhone"}: ${c.name}${secs >= 5 ? ` · ${secs} s` : ""}`
+      ? `${c.source === "iCloud" ? "Lade aus iCloud" : "Kopiere vom iPhone"}: ${c.name}${secs >= 5 ? ` · ${secs} s` : ""}${par}`
       : (e.name ? `Aktuell: ${e.name}` : "Vorbereiten …");
     icon.className = "dlg-icon"; icon.innerHTML = '<span class="spinner" style="width:22px;height:22px"></span>';
   } else {

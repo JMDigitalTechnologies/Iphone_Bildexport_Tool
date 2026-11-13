@@ -385,7 +385,36 @@ ERROR_CLOUD_PROVIDER_NOT_RUNNING = 362  # Windows: „Der Clouddateianbieter wir
 
 
 ICLOUD_STALL_SECONDS = 120        # so lange darf iCloud ohne Daten bleiben (plus Zuschlag nach Größe)
-ICLOUD_MIN_RATE = 256 * 1024      # Zuschlag: 1 s je 256 KB Dateigröße (große Videos laden erst komplett)
+ICLOUD_MIN_RATE = 128 * 1024      # Zuschlag: 1 s je 128 KB Dateigröße (große Videos laden erst komplett;
+                                  # bei parallelen Downloads teilen sie sich die Bandbreite)
+# Parallelität (gemessen: iCloud skaliert bis ~8 gleichzeitige Downloads, USB ist bei ~3-4 ausgereizt)
+ICLOUD_WORKERS = 8
+DEVICE_WORKERS = 3
+CONVERT_WORKERS = max(1, min(8, (os.cpu_count() or 2) - 2))
+FILE_ATTRIBUTE_PINNED = 0x00080000
+FILE_ATTRIBUTE_UNPINNED = 0x00100000
+FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x00400000
+
+
+def is_cloud_only(path: Path) -> bool:
+    """Liegt die Datei nur als iCloud-Platzhalter vor (noch nicht heruntergeladen)?"""
+    try:
+        return bool(path.stat().st_file_attributes & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
+    except (OSError, AttributeError):
+        return False
+
+
+def release_cloud_file(path: Path):
+    """Von iCloud heruntergeladene Datei wieder auf "nur online" setzen, damit Laufwerk C: nicht vollläuft.
+    (Entspricht "Speicherplatz freigeben" im Explorer-Kontextmenü.)"""
+    if os.name != "nt":
+        return
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    attrs = k32.GetFileAttributesW(str(path))
+    if attrs == 0xFFFFFFFF:
+        return
+    k32.SetFileAttributesW(str(path), (attrs & ~FILE_ATTRIBUTE_PINNED) | FILE_ATTRIBUTE_UNPINNED)
 
 
 class ICloudStalled(OSError):
@@ -505,6 +534,40 @@ def converter_info() -> dict:
     return _converter_cache
 
 
+_install_state = {"running": False}
+
+
+def install_converter(log) -> None:
+    """Pillow + pillow-heif nachinstallieren (auf Knopfdruck in der Oberfläche) und ohne Neustart laden."""
+    global _converter_cache
+    import importlib
+    import site
+    import subprocess
+    if _install_state["running"]:
+        return
+    _install_state["running"] = True
+    try:
+        log("Installiere Bildbibliothek (pillow, pillow-heif) …")
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+                            "pillow>=11.2", "pillow-heif>=0.22"], capture_output=True, text=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode:
+            tail = (r.stderr or r.stdout).strip().splitlines()[-3:]
+            log("Installation fehlgeschlagen: " + " | ".join(tail))
+            return
+        importlib.invalidate_caches()
+        try:
+            site.addsitedir(site.getusersitepackages())  # falls pip in den Benutzer-Ordner installiert hat
+        except Exception:
+            pass
+        _converter_cache = None
+        info = converter_info()
+        log("Bildbibliothek installiert – HEIC-Umwandlung ist verfügbar." if not info["error"]
+            else "Installiert, aber noch nicht ladbar – bitte das Tool neu starten.")
+    finally:
+        _install_state["running"] = False
+
+
 def convert_image(src: Path, dst: Path, fmt: str, quality: int = 90):
     """HEIC-Bild in `fmt` umwandeln. Die Drehung ist schon angewendet (pillow-heif);
     EXIF (Aufnahmedatum, GPS, Kamera) und Farbprofil werden übernommen, wo das Format es kann."""
@@ -569,6 +632,7 @@ class Options:
     quality: int = 90                    # Qualität für JPG/WebP/AVIF/JPEG 2000
     keep_heic: bool = False              # HEIC-Original zusätzlich behalten
     place_level: str | None = None       # Unterordner nach Ort in Alben/Datum: "city", "state", "country"
+    release_icloud: bool = True          # aus iCloud geladene Dateien danach wieder "nur online" (spart Platz auf C:)
 
 
 class Exporter:
@@ -587,6 +651,11 @@ class Exporter:
         self.restart_icloud = False              # "iCloud neu starten"
         self.failed_icloud: list[str] = []       # Dateien, die iCloud nicht geliefert hat
         self._pool = None                        # Umwandlungs-Threads (nur bei aktiver Umwandlung)
+        self._lock = threading.Lock()            # schützt Zähler/Listen (mehrere Threads)
+        self._dir_lock = threading.Lock()
+        self._dirsets: dict[str, set[str]] = {}  # Dateinamen je iPhone-Ordner (für _on_device)
+        self._icloud_lock = threading.RLock()    # nur ein Thread prüft/wartet auf iCloud
+        self._active: dict[int, dict] = {}       # laufende Übertragungen je Thread
         self._pool_slots: threading.Semaphore | None = None
         self._conv_lock = threading.Lock()
         self._probe_thread: threading.Thread | None = None
@@ -617,11 +686,11 @@ class Exporter:
         final = self._final(dst)
         if final == dst:
             return
-        if self._pool is None:
-            from concurrent.futures import ThreadPoolExecutor
-            self._pool = ThreadPoolExecutor(max_workers=max(1, min(4, (os.cpu_count() or 2) - 1)),
-                                            thread_name_prefix="convert")
-            self._pool_slots = threading.Semaphore(8)  # höchstens 8 Bilder in der Warteschlange
+        with self._lock:  # mehrere Download-Threads können gleichzeitig hier ankommen
+            if self._pool is None:
+                from concurrent.futures import ThreadPoolExecutor
+                self._pool = ThreadPoolExecutor(max_workers=CONVERT_WORKERS, thread_name_prefix="convert")
+                self._pool_slots = threading.Semaphore(CONVERT_WORKERS * 2)  # Warteschlange begrenzt (Speicher)
         self._pool_slots.acquire()
 
         def job():
@@ -631,27 +700,49 @@ class Exporter:
                     os.utime(final, (created, created))
                 if not self.opts.keep_heic:
                     dst.unlink(missing_ok=True)
-                with self._conv_lock:
-                    self.stats["converted"] += 1
+                self._inc("converted")
             except Exception as e:
-                with self._conv_lock:
-                    self.stats["convFailed"] += 1
+                self._inc("convFailed")
                 self.log(f"Umwandeln fehlgeschlagen ({dst.name}): {e} – HEIC-Original bleibt erhalten.")
             finally:
                 self._pool_slots.release()
 
         self._pool.submit(job)
 
+    def _inc(self, key: str, n: int = 1):
+        with self._lock:
+            self.stats[key] = self.stats.get(key, 0) + n
+
+    def _set_current(self, name: str | None, source: str = ""):
+        """Laufende Übertragung dieses Threads merken (für die Anzeige: älteste zuerst)."""
+        tid = threading.get_ident()
+        with self._lock:
+            if name is None:
+                self._active.pop(tid, None)
+            else:
+                self._active[tid] = {"name": name, "source": source, "since": time.time()}
+            act = sorted(self._active.values(), key=lambda c: c["since"])
+            self.shared["current"] = act[0] if act else None
+            self.shared["active"] = len(act)
+
     def _listdir(self, path):
-        if path not in self._dircache:
-            names = self.phone.listdir(path)
-            if not names:
-                return names  # leer oder Fehler -> nicht cachen, beim nächsten Mal neu fragen
-            self._dircache[path] = names
-        return self._dircache[path]
+        with self._dir_lock:
+            if path in self._dircache:
+                return self._dircache[path]
+        names = self.phone.listdir(path)
+        with self._dir_lock:
+            if names:
+                self._dircache[path] = names
+        return names
 
     def _on_device(self, a: Asset) -> bool:
-        names = {n.upper() for n in self._listdir(f"/{a.directory}")}
+        d = f"/{a.directory}"
+        names = self._dirsets.get(d)
+        if names is None:
+            listing = self._listdir(d)
+            names = {n.upper() for n in listing}
+            if listing:  # leer = Fehler oder leer -> nicht merken, später neu fragen
+                self._dirsets[d] = names
         return a.filename.upper() in names
 
     def _copy_local(self, src: Path, dst: Path, created: float | None):
@@ -738,9 +829,16 @@ class Exporter:
 
     def _ensure_icloud(self, sample: Path) -> bool:
         """Sicherstellen, dass iCloud für Windows Dateien liefert. Wartet sonst (mit Hinweis in der
-        Oberfläche), bis iCloud bereit ist, der Nutzer "ohne iCloud" wählt oder abbricht."""
+        Oberfläche), bis iCloud bereit ist, der Nutzer "ohne iCloud" wählt oder abbricht.
+        Bei parallelen Downloads prüft/wartet nur ein Thread, die anderen warten auf sein Ergebnis."""
         if self._icloud_state is not None:
             return self._icloud_state
+        with self._icloud_lock:
+            if self._icloud_state is not None:
+                return self._icloud_state
+            return self._ensure_icloud_locked(sample)
+
+    def _ensure_icloud_locked(self, sample: Path) -> bool:
         r = self._probe(sample, 20)
         if r in ("ok", "error"):  # "error": iCloud antwortet, nur diese Datei ist problematisch
             self._icloud_state = True
@@ -795,21 +893,25 @@ class Exporter:
                 items.append((mov, folder / (stem + mov.suffix)))
         for s_path, dst in items:
             if self._done(dst):
-                self.stats["skipped"] += 1
+                self._inc("skipped")
                 continue
             if not self._ensure_icloud(s_path):
                 return False  # ohne iCloud / abgebrochen -> als "nicht gefunden" zählen
-            self.shared["current"] = {"name": s_path.name, "source": "iCloud", "since": time.time()}
+            self._set_current(s_path.name, "iCloud")
+            was_cloud_only = is_cloud_only(s_path)
             for attempt in (1, 2):
                 try:
                     self._copy_local(s_path, dst, None)
+                    self._inc("bytes", dst.stat().st_size)
                     self._finish(dst, a.created)
-                    self.stats["icloud"] += 1
+                    self._inc("icloud")
+                    if was_cloud_only and self.opts.release_icloud:
+                        release_cloud_file(s_path)  # C: nicht volllaufen lassen
                     break
                 except ICloudStalled as e:
                     # Datei auslassen (späterer Export holt sie nach); vor der nächsten Datei prüfen,
                     # ob iCloud überhaupt noch reagiert -> sonst Warte-Hinweis statt Hängen.
-                    self.stats["failed"] += 1
+                    self._inc("failed")
                     self.failed_icloud.append(s_path.name)
                     self.log(f"{e} – übersprungen, wird beim nächsten Export erneut versucht.")
                     self._icloud_state = None
@@ -820,11 +922,44 @@ class Exporter:
                         if self._ensure_icloud(s_path):
                             continue
                         return False
-                    self.stats["failed"] += 1
+                    self._inc("failed")
                     self.failed_icloud.append(s_path.name)
                     self.log(f"Fehler beim Laden aus iCloud ({s_path.name}): {e}")
                     break
         return True
+
+    def _job_icloud(self, folder: Path, asset: Asset):
+        """Original liegt nicht auf dem iPhone ("iPhone-Speicher optimieren") -> iCloud-Ordner."""
+        main = folder / asset.filename
+        if self._done(main):
+            self._inc("skipped")
+        elif not self._from_icloud(asset, folder):
+            self._inc("missing")
+            with self._lock:
+                if len(self.missing_examples) < 5:
+                    self.missing_examples.append(asset.orig_name or asset.filename)
+
+    def _job_device(self, folder: Path, asset: Asset):
+        for src, dst_name in self._files_for(asset):
+            dst = folder / dst_name
+            if self._done(dst):
+                self._inc("skipped")
+                continue
+            self._set_current(dst_name, "iPhone")
+            try:
+                n = self.phone.download(src, dst)
+                self._inc("bytes", n or 0)
+                self._finish(dst, asset.created)
+                self._inc("copied")
+            except Exception as e:
+                if not self.phone.exists(src):
+                    self._inc("missing")
+                    with self._lock:
+                        if len(self.missing_examples) < 5:
+                            self.missing_examples.append(src)
+                else:
+                    self._inc("failed")
+                    self.log(f"Fehler bei {src}: {e}")
 
     def _files_for(self, a: Asset) -> list[tuple[str, str]]:
         """(Quellpfad auf iPhone, Zieldateiname)"""
@@ -867,7 +1002,7 @@ class Exporter:
             self.log(f"Alben und Monate bekommen Unterordner nach Ort ({lvl}).")
         self.log(f"{total} {what} in {len(groups)} Ordnern werden exportiert …")
         s = self.stats  # wird live aktualisiert (für die Fortschrittsanzeige)
-        s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0, converted=0, convFailed=0)
+        s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0, converted=0, convFailed=0, bytes=0)
         if self.opts.convert:
             fmt = CONVERT_FORMATS[self.opts.convert]
             self.log(f"HEIC-Bilder werden live in {fmt[2]} umgewandelt"
@@ -879,41 +1014,59 @@ class Exporter:
             self.log(f"Fehlende Originale werden aus „{self.opts.icloud.root}“ geholt "
                      f"({self.opts.icloud.count} Dateien).")
 
-        for i, (folder, asset) in enumerate(jobs, 1):
+        # Parallele Pipeline: iPhone (USB) und iCloud laufen gleichzeitig in eigenen Thread-Gruppen,
+        # die Umwandlung in einer dritten. Die Warteschlange ist begrenzt, damit Fortschritt,
+        # Abbrechen und Speicherbedarf überschaubar bleiben.
+        from concurrent.futures import ThreadPoolExecutor
+        self.log(f"Parallel: {DEVICE_WORKERS} × iPhone, {ICLOUD_WORKERS if self.opts.icloud else 0} × iCloud"
+                 + (f", {CONVERT_WORKERS} × Umwandlung" if self.opts.convert else "") + ".")
+        dev_pool = ThreadPoolExecutor(DEVICE_WORKERS, thread_name_prefix="iphone")
+        ic_pool = ThreadPoolExecutor(ICLOUD_WORKERS, thread_name_prefix="icloud")
+        slots = threading.Semaphore(DEVICE_WORKERS + ICLOUD_WORKERS + 4)
+        done = [0]
+        self.shared["startedAt"] = time.time()
+
+        def finished(asset):
+            with self._lock:
+                done[0] += 1
+                n = done[0]
+            self.progress(n, total, asset.filename)
+            slots.release()
+
+        def job(folder, asset, on_device):
+            try:
+                if self.stop.is_set():
+                    return
+                folder.mkdir(parents=True, exist_ok=True)
+                if on_device:
+                    self._job_device(folder, asset)
+                else:
+                    self._job_icloud(folder, asset)
+            except Exception as e:  # ein Fehler bei einer Datei darf den Export nicht stoppen
+                self._inc("failed")
+                self.log(f"Fehler bei {asset.filename}: {e}")
+            finally:
+                self._set_current(None)
+                finished(asset)
+
+        self.progress(0, total, "")
+        # Fotos zuerst, große Videos zum Schluss: iCloud liefert große Dateien weitgehend nacheinander
+        # und hält solange auch kleine zurück. So kommt das meiste früh an und die Restzeit stimmt besser.
+        jobs.sort(key=lambda j: (j[1].is_video, j[1].orig_size or 0) if j[1].is_video else (False, 0))
+        for folder, asset in jobs:
+            while not slots.acquire(timeout=0.5):
+                if self.stop.is_set():
+                    break
             if self.stop.is_set():
-                self.cancelled = True
-                self.log("Abgebrochen.")
                 break
-            self.progress(i, total, asset.filename)
-            folder.mkdir(parents=True, exist_ok=True)
-            if not self._on_device(asset):
-                # Original nicht auf dem iPhone ("iPhone-Speicher optimieren")
-                main = folder / asset.filename
-                if self._done(main):
-                    s["skipped"] += 1
-                elif not self._from_icloud(asset, folder):
-                    s["missing"] += 1
-                    if len(self.missing_examples) < 5:
-                        self.missing_examples.append(asset.orig_name or asset.filename)
-                continue
-            for src, dst_name in self._files_for(asset):
-                dst = folder / dst_name
-                self.shared["current"] = {"name": dst_name, "source": "iPhone", "since": time.time()}
-                if self._done(dst):
-                    s["skipped"] += 1
-                    continue
-                try:
-                    self.phone.download(src, dst)
-                    self._finish(dst, asset.created)
-                    s["copied"] += 1
-                except Exception as e:
-                    if not self.phone.exists(src):
-                        s["missing"] += 1
-                        if len(self.missing_examples) < 5:
-                            self.missing_examples.append(src)
-                    else:
-                        s["failed"] += 1
-                        self.log(f"Fehler bei {src}: {e}")
+            on_device = self._on_device(asset)
+            (dev_pool if on_device else ic_pool).submit(job, folder, asset, on_device)
+        if self.stop.is_set():
+            self.cancelled = True
+            self.log("Abgebrochen – laufende Übertragungen werden beendet …")
+        for pool in (dev_pool, ic_pool):
+            pool.shutdown(wait=True, cancel_futures=self.stop.is_set())
+        self.shared["active"] = 0
 
         if self._pool:
             self.progress(total, total, "Wandle die letzten Bilder um …")
@@ -922,6 +1075,9 @@ class Exporter:
         if self.opts.convert:
             self.log(f"Umgewandelt: {s['converted']} Bilder"
                      + (f", {s['convFailed']} fehlgeschlagen (als HEIC behalten)" if s["convFailed"] else "") + ".")
+        dur = max(1.0, time.time() - self.shared.get("startedAt", time.time()))
+        self.log(f"Dauer {int(dur // 60)} min {int(dur % 60)} s, übertragen {s['bytes'] / 1e9:.2f} GB "
+                 f"({s['bytes'] / 1e6 / dur:.1f} MB/s).")
         self.log(f"Fertig: {s['copied']} vom iPhone, {s['icloud']} aus iCloud, {s['skipped']} übersprungen "
                  f"(schon vorhanden), {s['missing']} nicht gefunden, {s['failed']} Fehler.")
         if s["missing"]:
@@ -1013,7 +1169,7 @@ class WebApp:
                 "export": self.export, "defaultTarget": self.default_target,
                 "icloudDir": str(self.icloud_dir) if self.icloud_dir else None,
                 "now": time.time(),
-                "convert": converter_info(),
+                "convert": {**converter_info(), "installing": _install_state["running"]},
             }
 
     def library(self) -> dict:
@@ -1066,6 +1222,7 @@ class WebApp:
                        bool(body.get("skip", True)))
         media = body.get("media") or ("all" if body.get("videos", True) else "photos")
         opts.media = media if media in ("all", "photos", "videos") else "all"
+        opts.release_icloud = bool(body.get("releaseIcloud", True))
         pl = body.get("placeLevel") or None
         opts.place_level = pl if pl in ("city", "state", "country") else None
         conv = body.get("convert") or None
@@ -1082,7 +1239,8 @@ class WebApp:
             self.phase = "exporting"
             self.export = {"running": True, "i": 0, "total": 0, "name": "", "target": str(target),
                            "stats": {"copied": 0, "icloud": 0, "skipped": 0, "missing": 0, "failed": 0,
-                                     "converted": 0, "convFailed": 0},
+                                     "converted": 0, "convFailed": 0, "bytes": 0},
+                           "active": 0, "startedAt": time.time(),
                            "cancelled": False, "error": None, "missingExamples": [], "icloudUsed": use_icloud,
                            "waiting": None, "current": None, "convert": opts.convert}
         self.stop_event.clear()
@@ -1217,6 +1375,9 @@ def run_web(port: int = 0, token: str | None = None, open_browser: bool = True, 
                 app.stop_event.set()
                 if app.exporter:
                     app.exporter.resume_event.set()
+                return self._send(200, {"ok": True})
+            if u.path == "/api/install-converter":
+                threading.Thread(target=install_converter, args=(app.log,), daemon=True).start()
                 return self._send(200, {"ok": True})
             if u.path == "/api/icloud":
                 ex = app.exporter
