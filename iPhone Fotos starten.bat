@@ -22,10 +22,10 @@ if not defined PY (
   exit /b 1
 )
 
-rem --- Benoetigte Bibliothek beim ersten Start installieren ---
-%PY% -c "import pymobiledevice3" >nul 2>nul
+rem --- Benoetigte Bibliotheken beim ersten Start (bzw. nach Updates) installieren ---
+%PY% -c "import pymobiledevice3, PIL, pillow_heif" >nul 2>nul
 if errorlevel 1 (
-  echo Erster Start: installiere benoetigte Bibliothek ^(pymobiledevice3^), das dauert einige Minuten ...
+  echo Installiere benoetigte Bibliotheken ^(iPhone-Zugriff, Bildumwandlung^), das dauert einige Minuten ...
   %PY% -m pip install --disable-pip-version-check -r requirements.txt
   if errorlevel 1 (
     echo.

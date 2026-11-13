@@ -39,6 +39,12 @@ Bei einem Startfehler steht der Grund in `iphone_fotos_fehler.log`.
   und macht nach der Anmeldung automatisch weiter.
   Was auch dort fehlt (noch nicht synchronisiert), wird als „nicht gefunden“ gemeldet; ein späterer
   Export holt es nach. Alternative: auf dem iPhone Einstellungen → Fotos → „Laden und Originale behalten“.
+- **HEIC live umwandeln** (Optionen → „HEIC live umwandeln“): Fotos werden während der Übertragung in
+  JPG, PNG, WebP, AVIF, TIFF, JPEG 2000, BMP, GIF oder PDF umgewandelt, mit Qualitätsregler für
+  JPG/WebP/AVIF/JPEG 2000. Ausrichtung wird übernommen, EXIF (Aufnahmedatum, GPS, Kamera) und Farbprofil
+  bleiben bei JPG/PNG/WebP/AVIF erhalten (TIFF: Datum und Kamera, ohne GPS). Das HEIC-Original kann
+  zusätzlich behalten werden. Die Umwandlung läuft parallel, die Übertragung wird dadurch kaum langsamer.
+  Kommandozeile: `--format jpg --qualitaet 90 [--heic-behalten]`.
 - **Videos** werden standardmäßig mit exportiert; über die Option „Videos exportieren“ (bzw. `--ohne-videos`)
   lassen sie sich weglassen. Live-Photo-Clips hängen an der eigenen Option „Live-Photo-Videos“.
 - Ein Foto in mehreren Alben/Personen wird in jeden Ordner kopiert.

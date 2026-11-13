@@ -387,6 +387,96 @@ class ICloudFolder:
         return cands[0][0]
 
 
+# ---------------------------------------------------------------------------
+# Live-Umwandlung von HEIC in andere Bildformate (Pillow + pillow-heif)
+# ---------------------------------------------------------------------------
+
+HEIC_EXT = {".HEIC", ".HEIF", ".HIF"}
+# Schlüssel: (Pillow-Format, Dateiendung, Anzeigename, Qualitätsregler sinnvoll)
+CONVERT_FORMATS = {
+    "jpg": ("JPEG", ".jpg", "JPG", True),
+    "png": ("PNG", ".png", "PNG (verlustfrei)", False),
+    "webp": ("WEBP", ".webp", "WebP", True),
+    "avif": ("AVIF", ".avif", "AVIF", True),
+    "tiff": ("TIFF", ".tif", "TIFF (verlustfrei, ohne GPS)", False),
+    "jp2": ("JPEG2000", ".jp2", "JPEG 2000", True),
+    "bmp": ("BMP", ".bmp", "BMP", False),
+    "gif": ("GIF", ".gif", "GIF (256 Farben)", False),
+    "pdf": ("PDF", ".pdf", "PDF", False),
+}
+_converter_cache: dict | None = None
+
+
+def converter_info() -> dict:
+    """Welche Zielformate stehen zur Verfügung? {"formats": [...], "error": str|None}"""
+    global _converter_cache
+    if _converter_cache is None:
+        try:
+            import pillow_heif
+            from PIL import Image
+            pillow_heif.register_heif_opener()
+            Image.init()
+            fmts = [{"id": k, "name": v[2], "quality": v[3]} for k, v in CONVERT_FORMATS.items()
+                    if v[0] in Image.SAVE]
+            _converter_cache = {"formats": fmts, "error": None}
+        except Exception as e:
+            _converter_cache = {"formats": [], "error": f"Bildbibliothek fehlt ({e}). "
+                                "Bitte 'pip install pillow pillow-heif' ausführen."}
+    return _converter_cache
+
+
+def convert_image(src: Path, dst: Path, fmt: str, quality: int = 90):
+    """HEIC-Bild in `fmt` umwandeln. Die Drehung ist schon angewendet (pillow-heif);
+    EXIF (Aufnahmedatum, GPS, Kamera) und Farbprofil werden übernommen, wo das Format es kann."""
+    from PIL import Image
+    converter_info()  # registriert den HEIC-Öffner
+    pil = CONVERT_FORMATS[fmt][0]
+    with Image.open(src) as im:
+        im.load()
+        exif = im.getexif()
+        icc = im.info.get("icc_profile")
+        xmp = im.info.get("xmp")
+        img = im
+        if pil in ("JPEG", "BMP", "PDF", "JPEG2000") and img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        if pil == "GIF":
+            img = img.convert("RGB").convert("P", palette=Image.ADAPTIVE, colors=256)
+        kw: dict = {}
+        if pil == "JPEG":
+            kw.update(quality=quality, optimize=True, subsampling=0 if quality >= 90 else 2)
+        elif pil in ("WEBP", "AVIF"):
+            kw["quality"] = quality
+        elif pil == "TIFF":
+            kw["compression"] = "tiff_lzw"
+        elif pil == "JPEG2000":
+            kw.update(irreversible=True, quality_mode="rates", quality_layers=[max(1.0, (100 - quality) / 2)])
+        elif pil == "PDF":
+            kw["resolution"] = 72.0
+        if exif and pil in ("JPEG", "PNG", "WEBP", "AVIF"):
+            kw["exif"] = exif.tobytes()
+        elif exif and pil == "TIFF":
+            # TIFF verträgt die Unterblöcke (EXIF/GPS) des iPhones nicht -> Hauptdaten + Aufnahmedatum
+            main = Image.Exif()
+            for k, v in exif.items():
+                if k not in (0x8769, 0x8825, 0x0112):
+                    main[k] = v
+            taken = exif.get_ifd(0x8769).get(0x9003)
+            if taken:
+                main[0x0132] = taken  # DateTime
+            kw["exif"] = main
+        if icc and pil in ("JPEG", "PNG", "WEBP", "AVIF", "TIFF"):
+            kw["icc_profile"] = icc
+        if xmp and pil in ("JPEG", "WEBP"):
+            kw["xmp"] = xmp
+        tmp = dst.with_name(dst.name + ".part")
+        try:
+            img.save(tmp, format=pil, **kw)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        os.replace(tmp, dst)
+
+
 @dataclass
 class Options:
     target: Path
@@ -395,6 +485,9 @@ class Options:
     skip_existing: bool = True
     icloud: ICloudFolder | None = None   # fehlende Originale aus iCloud für Windows holen
     videos: bool = True                  # Videos (nicht Live-Photo-Clips) mit exportieren
+    convert: str | None = None           # HEIC live umwandeln in dieses Format (Schlüssel aus CONVERT_FORMATS)
+    quality: int = 90                    # Qualität für JPG/WebP/AVIF/JPEG 2000
+    keep_heic: bool = False              # HEIC-Original zusätzlich behalten
 
 
 class Exporter:
@@ -412,8 +505,61 @@ class Exporter:
         self.skip_icloud = False                 # "Ohne iCloud fortfahren"
         self.restart_icloud = False              # "iCloud neu starten"
         self.failed_icloud: list[str] = []       # Dateien, die iCloud nicht geliefert hat
+        self._pool = None                        # Umwandlungs-Threads (nur bei aktiver Umwandlung)
+        self._pool_slots: threading.Semaphore | None = None
+        self._conv_lock = threading.Lock()
         self._probe_thread: threading.Thread | None = None
         self._probe_result: dict = {}
+
+    # --- HEIC-Umwandlung ------------------------------------------------------
+    def _final(self, dst: Path) -> Path:
+        """Endgültiger Dateiname (bei Umwandlung mit neuer Endung)."""
+        if self.opts.convert and dst.suffix.upper() in HEIC_EXT:
+            return dst.with_suffix(CONVERT_FORMATS[self.opts.convert][1])
+        return dst
+
+    def _done(self, dst: Path) -> bool:
+        """Liegt die Datei schon fertig im Ziel? (für "Vorhandene überspringen")"""
+        if not self.opts.skip_existing:
+            return False
+        final = self._final(dst)
+        ok = final.exists() and final.stat().st_size > 0
+        if ok and final != dst and self.opts.keep_heic:
+            ok = dst.exists() and dst.stat().st_size > 0
+        return ok
+
+    def _finish(self, dst: Path, created: float | None):
+        """Nach dem Kopieren: Datum setzen und ggf. HEIC umwandeln – parallel in eigenen
+        Threads, damit die Übertragung währenddessen weiterläuft."""
+        if created:
+            os.utime(dst, (created, created))
+        final = self._final(dst)
+        if final == dst:
+            return
+        if self._pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._pool = ThreadPoolExecutor(max_workers=max(1, min(4, (os.cpu_count() or 2) - 1)),
+                                            thread_name_prefix="convert")
+            self._pool_slots = threading.Semaphore(8)  # höchstens 8 Bilder in der Warteschlange
+        self._pool_slots.acquire()
+
+        def job():
+            try:
+                convert_image(dst, final, self.opts.convert, self.opts.quality)
+                if created:
+                    os.utime(final, (created, created))
+                if not self.opts.keep_heic:
+                    dst.unlink(missing_ok=True)
+                with self._conv_lock:
+                    self.stats["converted"] += 1
+            except Exception as e:
+                with self._conv_lock:
+                    self.stats["convFailed"] += 1
+                self.log(f"Umwandeln fehlgeschlagen ({dst.name}): {e} – HEIC-Original bleibt erhalten.")
+            finally:
+                self._pool_slots.release()
+
+        self._pool.submit(job)
 
     def _listdir(self, path):
         if path not in self._dircache:
@@ -567,7 +713,7 @@ class Exporter:
             if mov:
                 items.append((mov, folder / (stem + mov.suffix)))
         for s_path, dst in items:
-            if self.opts.skip_existing and dst.exists() and dst.stat().st_size > 0:
+            if self._done(dst):
                 self.stats["skipped"] += 1
                 continue
             if not self._ensure_icloud(s_path):
@@ -575,7 +721,8 @@ class Exporter:
             self.shared["current"] = {"name": s_path.name, "source": "iCloud", "since": time.time()}
             for attempt in (1, 2):
                 try:
-                    self._copy_local(s_path, dst, a.created)
+                    self._copy_local(s_path, dst, None)
+                    self._finish(dst, a.created)
                     self.stats["icloud"] += 1
                     break
                 except ICloudStalled as e:
@@ -632,7 +779,12 @@ class Exporter:
         what = "Fotos/Videos" if self.opts.videos else "Fotos (ohne Videos)"
         self.log(f"{total} {what} in {len(groups)} Ordnern werden exportiert …")
         s = self.stats  # wird live aktualisiert (für die Fortschrittsanzeige)
-        s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0)
+        s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0, converted=0, convFailed=0)
+        if self.opts.convert:
+            fmt = CONVERT_FORMATS[self.opts.convert]
+            self.log(f"HEIC-Bilder werden live in {fmt[2]} umgewandelt"
+                     + (f" (Qualität {self.opts.quality})" if fmt[3] else "")
+                     + (", HEIC-Original bleibt zusätzlich erhalten." if self.opts.keep_heic else "."))
         self.missing_examples: list[str] = []
         self.cancelled = False
         if self.opts.icloud:
@@ -649,7 +801,7 @@ class Exporter:
             if not self._on_device(asset):
                 # Original nicht auf dem iPhone ("iPhone-Speicher optimieren")
                 main = folder / asset.filename
-                if self.opts.skip_existing and main.exists() and main.stat().st_size > 0:
+                if self._done(main):
                     s["skipped"] += 1
                 elif not self._from_icloud(asset, folder):
                     s["missing"] += 1
@@ -659,13 +811,12 @@ class Exporter:
             for src, dst_name in self._files_for(asset):
                 dst = folder / dst_name
                 self.shared["current"] = {"name": dst_name, "source": "iPhone", "since": time.time()}
-                if self.opts.skip_existing and dst.exists() and dst.stat().st_size > 0:
+                if self._done(dst):
                     s["skipped"] += 1
                     continue
                 try:
                     self.phone.download(src, dst)
-                    if asset.created:
-                        os.utime(dst, (asset.created, asset.created))
+                    self._finish(dst, asset.created)
                     s["copied"] += 1
                 except Exception as e:
                     if not self.phone.exists(src):
@@ -676,6 +827,13 @@ class Exporter:
                         s["failed"] += 1
                         self.log(f"Fehler bei {src}: {e}")
 
+        if self._pool:
+            self.progress(total, total, "Wandle die letzten Bilder um …")
+            self._pool.shutdown(wait=True)
+            self._pool = None
+        if self.opts.convert:
+            self.log(f"Umgewandelt: {s['converted']} Bilder"
+                     + (f", {s['convFailed']} fehlgeschlagen (als HEIC behalten)" if s["convFailed"] else "") + ".")
         self.log(f"Fertig: {s['copied']} vom iPhone, {s['icloud']} aus iCloud, {s['skipped']} übersprungen "
                  f"(schon vorhanden), {s['missing']} nicht gefunden, {s['failed']} Fehler.")
         if s["missing"]:
@@ -767,6 +925,7 @@ class WebApp:
                 "export": self.export, "defaultTarget": self.default_target,
                 "icloudDir": str(self.icloud_dir) if self.icloud_dir else None,
                 "now": time.time(),
+                "convert": converter_info(),
             }
 
     def library(self) -> dict:
@@ -818,15 +977,23 @@ class WebApp:
         opts = Options(target, bool(body.get("live", True)), bool(body.get("edited", False)),
                        bool(body.get("skip", True)))
         opts.videos = bool(body.get("videos", True))
+        conv = body.get("convert") or None
+        if conv:
+            if conv not in {f["id"] for f in converter_info()["formats"]}:
+                return converter_info()["error"] or f"Format {conv} wird nicht unterstützt."
+            opts.convert = conv
+            opts.quality = max(10, min(100, int(body.get("quality") or 90)))
+            opts.keep_heic = bool(body.get("keepHeic", False))
         use_icloud = bool(body.get("icloud", True)) and self.icloud_dir is not None
         with self.lock:
             if self.phase != "ready":
                 return "Gerade nicht möglich (keine Verbindung oder Export läuft schon)."
             self.phase = "exporting"
             self.export = {"running": True, "i": 0, "total": 0, "name": "", "target": str(target),
-                           "stats": {"copied": 0, "icloud": 0, "skipped": 0, "missing": 0, "failed": 0},
+                           "stats": {"copied": 0, "icloud": 0, "skipped": 0, "missing": 0, "failed": 0,
+                                     "converted": 0, "convFailed": 0},
                            "cancelled": False, "error": None, "missingExamples": [], "icloudUsed": use_icloud,
-                           "waiting": None, "current": None}
+                           "waiting": None, "current": None, "convert": opts.convert}
         self.stop_event.clear()
         threading.Thread(target=self._export, args=(groups, opts, use_icloud), daemon=True).start()
         return None
@@ -1022,6 +1189,9 @@ def run_cli(argv):
     p.add_argument("--ohne-live", action="store_true", help="Live-Photo-Videos nicht mitnehmen")
     p.add_argument("--bearbeitet", action="store_true", help="Bearbeitete Versionen zusätzlich speichern")
     p.add_argument("--ohne-videos", action="store_true", help="Nur Fotos exportieren, Videos weglassen")
+    p.add_argument("--format", choices=list(CONVERT_FORMATS), help="HEIC live in dieses Format umwandeln")
+    p.add_argument("--qualitaet", type=int, default=90, help="Qualität 10–100 für JPG/WebP/AVIF/JPEG 2000")
+    p.add_argument("--heic-behalten", action="store_true", help="Bei --format das HEIC-Original zusätzlich behalten")
     p.add_argument("--ohne-icloud", action="store_true",
                    help="Fehlende Originale NICHT aus dem iCloud-Fotos-Ordner (iCloud für Windows) holen")
     a = p.parse_args(argv)
@@ -1069,6 +1239,11 @@ def run_cli(argv):
     groups = pick(albums, a.album) + pick(people, a.person) + pick_dates(a.datum)
     opts = Options(Path(a.ziel), not a.ohne_live, a.bearbeitet, True)
     opts.videos = not a.ohne_videos
+    if a.format:
+        info = converter_info()
+        if a.format not in {f["id"] for f in info["formats"]}:
+            raise RuntimeError(info["error"] or f"Format {a.format} wird nicht unterstützt.")
+        opts.convert, opts.quality, opts.keep_heic = a.format, max(10, min(100, a.qualitaet)), a.heic_behalten
     icloud_dir = None if a.ohne_icloud else find_icloud_photos_dir()
     if icloud_dir:
         opts.icloud = ICloudFolder(icloud_dir)

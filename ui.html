@@ -284,6 +284,16 @@ dialog { overflow-x: hidden; }
 .bar-label { display: flex; justify-content: space-between; font-size: var(--fs-sm); color: var(--text-2); margin-top: var(--space-2); font-variant-numeric: tabular-nums; }
 .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: var(--space-2); }
 .option:has(input:disabled) { opacity: .55; cursor: not-allowed; }
+.options-panel { max-height: min(78vh, 640px); overflow-y: auto; }
+.option-block { padding: var(--space-3); border-top: 1px solid var(--border); margin-top: var(--space-1); display: grid; gap: var(--space-2); }
+.option-block > label b { display: block; font-size: var(--fs-base); }
+.option-block small { color: var(--text-2); font-size: var(--fs-sm); }
+.option-block select.input { padding-right: var(--space-2); }
+.range-row { display: flex; align-items: center; gap: var(--space-3); min-height: var(--tap); }
+.range-row input[type=range] { flex: 1; accent-color: var(--accent); min-height: var(--tap); }
+.range-row output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.option.compact { padding: var(--space-2) 0; }
+.conv-line { font-size: var(--fs-sm); color: var(--text-2); margin-top: var(--space-1); }
 .stat { background: var(--surface-2); border-radius: var(--radius-sm); padding: var(--space-3); display: grid; }
 .stat b { font-size: var(--fs-xl); font-variant-numeric: tabular-nums; line-height: 1.2; }
 .stat span { color: var(--text-2); font-size: .75rem; }
@@ -413,6 +423,20 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
       <label class="option"><input type="checkbox" id="optLive" checked><span><b>Live-Photo-Videos</b><small>Die kurzen .MOV-Clips der Live Photos mitnehmen.</small></span></label>
       <label class="option"><input type="checkbox" id="optEdited"><span><b>Bearbeitete Versionen</b><small>Zusätzlich als „…_bearbeitet.jpg“ speichern.</small></span></label>
       <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
+      <div class="option-block">
+        <label for="optConvert"><b>HEIC live umwandeln</b><small id="optConvertHint">Fotos werden während der Übertragung in das gewählte Format umgewandelt. Aufnahmedatum, GPS und Farbprofil bleiben erhalten.</small></label>
+        <select id="optConvert" class="input">
+          <option value="">Nicht umwandeln (HEIC-Original)</option>
+        </select>
+        <div id="convExtra" hidden>
+          <div class="range-row" id="qualityRow">
+            <label for="optQuality">Qualität</label>
+            <input type="range" id="optQuality" min="50" max="100" step="1" value="90">
+            <output id="optQualityOut" for="optQuality">90</output>
+          </div>
+          <label class="option compact"><input type="checkbox" id="optKeepHeic"><span><b>HEIC-Original zusätzlich behalten</b><small>Sonst wird nur die umgewandelte Datei gespeichert.</small></span></label>
+        </div>
+      </div>
     </div>
   </details>
   <button id="exportBtn" class="btn btn-primary" type="button" disabled><svg aria-hidden="true"><use href="#i-download"/></svg><span>Exportieren</span></button>
@@ -431,6 +455,7 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
     <div>
       <div class="bar" role="progressbar" id="dlgBar" aria-label="Fortschritt" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="dlgBarFill"></div></div>
       <div class="bar-label"><span id="dlgCount">0 / 0</span><span id="dlgPct">0 %</span></div>
+      <p class="conv-line" id="dlgConv" hidden></p>
     </div>
     <div class="stats">
       <div class="stat good"><b id="stCopied">0</b><span>vom iPhone</span></div>
@@ -515,7 +540,8 @@ const Demo = DEMO ? (() => {
     const total = all.filter((g) => body.ids.includes(g.id))
       .reduce((n, g) => n + g.count - (body.videos ? 0 : g.videos), 0);
     const e = st.export = { running: true, i: 0, total, name: "", target: body.target, cancelled: false, error: null,
-                            icloudUsed: body.icloud, stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0 } };
+                            icloudUsed: body.icloud, convert: body.convert || null,
+                            stats: { copied: 0, icloud: 0, skipped: 0, missing: 0, failed: 0, converted: 0, convFailed: 0 } };
     st.phase = "exporting"; stopFlag = false;
     log(`${total} Fotos/Videos werden exportiert … (Demo)`);
     const step = Math.max(1, Math.round(total / 50));
@@ -528,6 +554,7 @@ const Demo = DEMO ? (() => {
           if (e.i % 29 === 0) e.stats.missing++;
           else if (body.skip && e.i % 11 === 0) e.stats.skipped++;
           else if (body.icloud && e.i % 3) e.stats.icloud++;
+          if (body.convert && e.i % 9 && !(e.i % 29 === 0)) e.stats.converted++;
           else e.stats.copied++;
         }
         e.name = `IMG_${String(4000 + e.i).padStart(4, "0")}.HEIC`;
@@ -547,7 +574,13 @@ const Demo = DEMO ? (() => {
         const since = Number(new URLSearchParams(q).get("since")) || 0;
         return { ...st, logs: logs.slice(since), logIndex: logs.length,
                  defaultTarget: "C:\\Users\\Du\\Pictures\\iPhone Export",
-                 icloudDir: "C:\\Users\\Du\\Pictures\\iCloud Photos\\Photos" };
+                 icloudDir: "C:\\Users\\Du\\Pictures\\iCloud Photos\\Photos",
+                 convert: { error: null, formats: [
+                   { id: "jpg", name: "JPG", quality: true }, { id: "png", name: "PNG (verlustfrei)", quality: false },
+                   { id: "webp", name: "WebP", quality: true }, { id: "avif", name: "AVIF", quality: true },
+                   { id: "tiff", name: "TIFF (verlustfrei)", quality: false }, { id: "jp2", name: "JPEG 2000", quality: true },
+                   { id: "bmp", name: "BMP", quality: false }, { id: "gif", name: "GIF (256 Farben)", quality: false },
+                   { id: "pdf", name: "PDF", quality: false }] } };
       }
       case "/api/connect":
         st.phase = "connecting"; log("Verbinde mit iPhone … (Demo)");
@@ -630,6 +663,19 @@ async function poll() {
   const prev = S.phase;
   S.phase = st.phase;
   if (!$("targetInput").value) $("targetInput").value = store.get("target", st.defaultTarget);
+  if (st.convert && !S.convertFilled) {
+    S.convertFilled = true;
+    S.formats = st.convert.formats;
+    const sel = $("optConvert");
+    for (const f of st.convert.formats) {
+      const o = document.createElement("option");
+      o.value = f.id; o.textContent = f.name; sel.append(o);
+    }
+    if (st.convert.error) { sel.disabled = true; $("optConvertHint").textContent = st.convert.error; }
+    const saved = store.get("convert", "");
+    if (st.convert.formats.some((f) => f.id === saved)) sel.value = saved;
+    updateConvertUi();
+  }
   if (S.icloudDir !== st.icloudDir) {
     S.icloudDir = st.icloudDir;
     $("optICloud").disabled = !st.icloudDir;
@@ -834,9 +880,10 @@ function updateSummary() {
   if (p) parts.push(`${p} ${p === 1 ? "Person" : "Personen"}`);
   if (m) parts.push(`${m} ${m === 1 ? "Monat" : "Monate"}`);
   $("selSummary").textContent = parts.length ? parts.join(" · ") : "Nichts ausgewählt";
-  $("selDetail").textContent = !parts.length ? "Wähle Alben oder Personen aus"
+  const conv = (S.formats || []).find((x) => x.id === $("optConvert").value);
+  $("selDetail").textContent = (!parts.length ? "Wähle Alben oder Personen aus"
     : withVideos ? `${nf.format(files - vids)} Fotos · ${nf.format(vids)} Videos`
-    : `${nf.format(files)} Fotos (ohne Videos)`;
+    : `${nf.format(files)} Fotos (ohne Videos)`) + (parts.length && conv ? ` · HEIC → ${conv.name.split(" ")[0]}` : "");
   $("exportBtn").disabled = !gs.length || S.phase !== "ready";
 }
 
@@ -884,6 +931,21 @@ $("pickBtn").onclick = async () => {
     if (r.path) { $("targetInput").value = r.path; store.set("target", r.path); }
   } finally { $("pickBtn").disabled = false; }
 };
+function updateConvertUi() {
+  const id = $("optConvert").value;
+  const f = (S.formats || []).find((x) => x.id === id);
+  $("convExtra").hidden = !id;
+  $("qualityRow").hidden = !(f && f.quality);
+  $("optQualityOut").textContent = $("optQuality").value;
+  updateSummary();
+}
+$("optConvert").onchange = () => { store.set("convert", $("optConvert").value); updateConvertUi(); };
+$("optQuality").value = store.get("quality", 90);
+$("optQuality").oninput = () => { $("optQualityOut").textContent = $("optQuality").value; store.set("quality", +$("optQuality").value); };
+$("optQualityOut").textContent = $("optQuality").value;
+$("optKeepHeic").checked = store.get("keepHeic", false);
+$("optKeepHeic").onchange = () => store.set("keepHeic", $("optKeepHeic").checked);
+
 for (const [id, key] of [["optICloud", "icloud"], ["optVideos", "videos"], ["optLive", "live"], ["optEdited", "edited"], ["optSkip", "skip"]]) {
   $(id).checked = store.get(key, $(id).checked);
   $(id).onchange = () => { store.set(key, $(id).checked); updateSummary(); };
@@ -897,6 +959,8 @@ $("exportBtn").onclick = async () => {
     ids: [...S.selected], target: $("targetInput").value.trim(),
     live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
     videos: $("optVideos").checked,
+    convert: $("optConvert").disabled ? "" : $("optConvert").value,
+    quality: +$("optQuality").value, keepHeic: $("optKeepHeic").checked,
     icloud: $("optICloud").checked && !$("optICloud").disabled,
   };
   const r = await api("/api/export", body);
@@ -917,6 +981,12 @@ function renderExport(e, now) {
   $("dlgPct").textContent = (done && !e.cancelled ? 100 : pct) + " %";
   $("stCopied").textContent = nf.format(e.stats.copied);
   $("stICloud").textContent = nf.format(e.stats.icloud || 0);
+  const convName = e.convert && (S.formats || []).find((x) => x.id === e.convert);
+  $("dlgConv").hidden = !e.convert;
+  if (e.convert) {
+    $("dlgConv").textContent = `In ${convName ? convName.name.split(" ")[0] : e.convert.toUpperCase()} umgewandelt: ${nf.format(e.stats.converted || 0)}`
+      + (e.stats.convFailed ? ` · ${nf.format(e.stats.convFailed)} fehlgeschlagen (HEIC behalten)` : "");
+  }
   $("stSkipped").textContent = nf.format(e.stats.skipped);
   $("stMissing").textContent = nf.format(e.stats.missing);
   $("stFailed").textContent = nf.format(e.stats.failed);
