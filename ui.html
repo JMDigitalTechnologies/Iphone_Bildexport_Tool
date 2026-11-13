@@ -277,6 +277,17 @@ dialog { overflow-x: hidden; }
 .dlg-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-text); flex: none; }
 .dlg-icon svg { width: 24px; height: 24px; }
 .dlg-icon.done { background: var(--success-soft); color: var(--success); }
+.dlg-icon.ringbox { width: 56px; height: 56px; border-radius: 50%; background: transparent; }
+.dlg-icon .ring { width: 56px; height: 56px; display: block; }
+.ring circle { fill: none; stroke-width: 5; }
+.ring .track { stroke: var(--surface-3); }
+.ring .bar {
+  stroke: var(--accent); stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: 50% 50%;
+  transition: stroke-dashoffset 900ms var(--ease), stroke 300ms var(--ease);
+}
+.ringbox.paused .ring .bar { stroke: var(--warn); }
+.ring text { font: 700 12px var(--font); fill: var(--text); font-variant-numeric: tabular-nums; }
 .dlg h2 { font-size: var(--fs-xl); letter-spacing: -.01em; line-height: 1.2; }
 .dlg-sub { color: var(--text-2); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
@@ -736,9 +747,10 @@ async function poll() {
   // Verbinden-Button
   const cb = $("connectBtn");
   cb.disabled = st.phase === "connecting";
-  cb.innerHTML = st.phase === "connecting"
+  const cbHtml = st.phase === "connecting"
     ? '<span class="spinner" aria-hidden="true"></span><span>Lade Foto-Datenbank …</span>'
     : '<svg aria-hidden="true"><use href="#i-usb"/></svg><span>iPhone verbinden</span>';
+  if (cb.dataset.state !== st.phase) { cb.dataset.state = st.phase; cb.innerHTML = cbHtml; }
 
   // Fehler
   if (st.error !== S.lastErr) {
@@ -761,8 +773,11 @@ async function poll() {
 function setPill(kind, text) {
   const p = $("devicePill");
   p.className = "pill" + (kind === "ok" ? " ok" : "");
-  p.innerHTML = (kind === "busy" ? '<span class="spinner" aria-hidden="true"></span>' : '<span class="dot" aria-hidden="true"></span>') + "<span></span>";
-  p.lastChild.textContent = text;
+  if (p.dataset.kind !== kind) {
+    p.dataset.kind = kind;
+    p.innerHTML = (kind === "busy" ? '<span class="spinner" aria-hidden="true"></span>' : '<span class="dot" aria-hidden="true"></span>') + "<span></span>";
+  }
+  if (p.lastChild.textContent !== text) p.lastChild.textContent = text;
 }
 
 function renderLog() {
@@ -1039,6 +1054,23 @@ $("exportBtn").onclick = async () => {
   setTimeout(poll, 200);
 };
 
+const RING_C = 2 * Math.PI * 23;  // Umfang des Rings (r = 23)
+function setRing(icon, fraction, paused) {
+  if (!icon.querySelector(".ring")) {
+    icon.className = "dlg-icon ringbox";
+    icon.innerHTML = `<svg class="ring" viewBox="0 0 56 56" aria-hidden="true">
+      <circle class="track" cx="28" cy="28" r="23"/>
+      <circle class="bar" cx="28" cy="28" r="23" stroke-dasharray="${RING_C}" stroke-dashoffset="${RING_C}"/>
+      <text x="28" y="28" text-anchor="middle" dominant-baseline="central">0%</text></svg>`;
+  }
+  icon.classList.toggle("paused", !!paused);
+  const f = Math.max(0, Math.min(1, fraction || 0));
+  icon.querySelector(".bar").style.strokeDashoffset = String(RING_C * (1 - f));
+  const label = `${Math.floor(f * 100)}%`;
+  const txt = icon.querySelector("text");
+  if (txt.textContent !== label) txt.textContent = label;
+}
+
 function renderExport(e, now) {
   const dlg = $("exportDlg");
   if (!dlg.open) dlg.showModal();
@@ -1046,7 +1078,8 @@ function renderExport(e, now) {
   const done = !e.running;
   $("dlgBarFill").style.width = (done && !e.cancelled ? 100 : pct) + "%";
   $("dlgBar").setAttribute("aria-valuenow", done && !e.cancelled ? 100 : pct);
-  $("dlgCount").textContent = `${nf.format(e.i)} / ${nf.format(e.total)}`;
+  const cnt = `${nf.format(e.i)} / ${nf.format(e.total)}`;
+  if ($("dlgCount").textContent !== cnt) $("dlgCount").textContent = cnt;
   $("dlgPct").textContent = (done && !e.cancelled ? 100 : pct) + " %";
   $("stCopied").textContent = nf.format(e.stats.copied);
   $("stICloud").textContent = nf.format(e.stats.icloud || 0);
@@ -1090,6 +1123,7 @@ function renderExport(e, now) {
   document.title = waiting ? "⏸ Warte auf iCloud · iPhone Foto-Export" : (DEMO ? "Demo · iPhone Foto-Export" : "iPhone Foto-Export");
 
   const icon = $("dlgIcon");
+  if (!done) setRing(icon, e.total ? e.i / e.total : 0, waiting);
   if (waiting) {
     $("dlgTitle").textContent = "Export pausiert";
     $("dlgSub").textContent = "Wartet auf die Anmeldung bei iCloud für Windows";
@@ -1097,11 +1131,12 @@ function renderExport(e, now) {
     $("dlgTitle").textContent = "Exportiere …";
     const c = e.current;
     const secs = c && now ? Math.max(0, Math.round(now - c.since)) : 0;
-    const par = e.active > 1 ? ` (+${e.active - 1} parallel)` : "";
-    $("dlgSub").textContent = c
-      ? `${c.source === "iCloud" ? "Lade aus iCloud" : "Kopiere vom iPhone"}: ${c.name}${secs >= 5 ? ` · ${secs} s` : ""}${par}`
-      : (e.name ? `Aktuell: ${e.name}` : "Vorbereiten …");
-    icon.className = "dlg-icon"; icon.innerHTML = '<span class="spinner" style="width:22px;height:22px"></span>';
+    const sub = !c && !e.i ? "Vorbereiten …"
+      : c && secs >= 10  // nur bei auffällig langer Übertragung den Dateinamen zeigen
+        ? `${c.source === "iCloud" ? "Lade aus iCloud" : "Kopiere vom iPhone"}: ${c.name} · ${secs} s`
+          + (e.active > 1 ? ` (+${e.active - 1} parallel)` : "")
+        : e.active > 1 ? `${e.active} Übertragungen laufen gleichzeitig` : "Übertragung läuft";
+    if ($("dlgSub").textContent !== sub) $("dlgSub").textContent = sub;
   } else {
     $("dlgTitle").textContent = e.error ? "Export fehlgeschlagen" : e.cancelled ? "Export abgebrochen" : "Export fertig";
     $("dlgSub").textContent = e.error || e.target;
