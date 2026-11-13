@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import plistlib
 import queue
 import re
 import shutil
@@ -24,6 +25,7 @@ import tempfile
 import threading
 import time
 import traceback
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -140,6 +142,7 @@ class Asset:
     orig_name: str | None = None   # Originaldateiname (für Abgleich mit iCloud für Windows)
     orig_size: int | None = None   # Originalgröße in Bytes
     kind: int | None = None        # ZKIND: 0 = Foto, 1 = Video
+    place: dict | None = None      # Ort laut iPhone: city, state, country, iso
 
     @property
     def is_video(self) -> bool:
@@ -163,6 +166,46 @@ class Group:
 
 MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni",
           "Juli", "August", "September", "Oktober", "November", "Dezember"]
+
+
+def decode_place(blob: bytes) -> dict | None:
+    """Ortsangabe aus ZREVERSELOCATIONDATA lesen (vom iPhone ermittelte Adresse, NSKeyedArchiver-plist).
+    Ergebnis: {"city", "subArea", "state", "country", "iso"} – fehlende Teile fehlen."""
+    try:
+        objs = plistlib.loads(blob)["$objects"]
+    except Exception:
+        return None
+
+    def get(o, key):
+        v = o.get(key) if isinstance(o, dict) else None
+        if isinstance(v, plistlib.UID):
+            v = objs[v.data]
+        return None if v == "$null" else v
+
+    root = next((o for o in objs if isinstance(o, dict) and "postalAddress" in o), None)
+    out: dict = {}
+    addr = get(root, "postalAddress") if root else None
+    if isinstance(addr, dict):
+        for key, name in (("_city", "city"), ("_subAdministrativeArea", "subArea"), ("_state", "state"),
+                          ("_country", "country"), ("_ISOCountryCode", "iso")):
+            v = get(addr, key)
+            if isinstance(v, str) and v.strip():
+                out[name] = v.strip()
+    if root and not out.get("city"):
+        # Fallback: Ortsliste der Karte (placeType 4 = Stadt, 2 = Bundesland, 1 = Land)
+        items = get(get(root, "mapItem") or {}, "sortedPlaceInfos")
+        for ref in (get(items, "NS.objects") or []) if isinstance(items, dict) else []:
+            info = objs[ref.data] if isinstance(ref, plistlib.UID) else None
+            kind, name = get(info, "placeType"), get(info, "name")
+            if isinstance(name, str):
+                field = {4: "city", 2: "state", 1: "country"}.get(kind)
+                if field and field not in out:
+                    out[field] = name
+    if root and "iso" not in out:
+        iso = get(root, "countryCode")
+        if isinstance(iso, str):
+            out["iso"] = iso
+    return out or None
 
 
 class PhotoLibrary:
@@ -195,12 +238,33 @@ class PhotoLibrary:
             ac = self._cols("ZADDITIONALASSETATTRIBUTES")
             if {"ZASSET", "ZORIGINALFILENAME"} <= set(ac):
                 size = "ZORIGINALFILESIZE" if "ZORIGINALFILESIZE" in ac else "NULL"
-                for r in self.con.execute(f"SELECT ZASSET, ZORIGINALFILENAME, {size} "
+                geo = "ZREVERSELOCATIONDATA" if "ZREVERSELOCATIONDATA" in ac else "NULL"
+                for r in self.con.execute(f"SELECT ZASSET, ZORIGINALFILENAME, {size}, {geo} "
                                           f"FROM ZADDITIONALASSETATTRIBUTES"):
                     a = result.get(r[0])
                     if a:
                         a.orig_name, a.orig_size = r[1], r[2]
+                        if r[3]:
+                            a.place = decode_place(r[3])
+        isos = Counter(a.place["iso"] for a in result.values() if a.place and a.place.get("iso"))
+        self.home_iso = isos.most_common(1)[0][0] if isos else None  # Heimatland = häufigstes Land
         return result
+
+    def place_label(self, a: "Asset", level: str) -> str:
+        """Ordnername für den Ort eines Fotos. level: "city", "state" oder "country"."""
+        p = a.place or {}
+        if level == "country":
+            name = p.get("country")
+        elif level == "state":
+            name = p.get("state") or p.get("country")
+        else:
+            name = p.get("city") or p.get("subArea") or p.get("state") or p.get("country")
+        if not name:
+            return "Ohne Ort"
+        if level != "country" and p.get("iso") and p.get("country") and p["iso"] != self.home_iso \
+                and name != p["country"]:
+            name = f"{name} ({p['country']})"  # Ausland: Land dazuschreiben
+        return name
 
     # --- Alben ---------------------------------------------------------------
     def _album_join(self):
@@ -279,6 +343,22 @@ class PhotoLibrary:
 
     def close(self):
         self.con.close()
+
+
+def make_workdir() -> Path:
+    """Arbeitsordner für die Kopie der Foto-Datenbank. Wird beim Beenden gelöscht; Reste früherer
+    Läufe (z.B. nach einem Absturz) werden beim Start aufgeräumt."""
+    import atexit
+    base = Path(tempfile.gettempdir())
+    for old in base.glob("iphone_fotos_*"):
+        try:
+            if old.is_dir() and time.time() - old.stat().st_mtime > 6 * 3600:
+                shutil.rmtree(old, ignore_errors=True)
+        except OSError:
+            pass
+    d = Path(tempfile.mkdtemp(prefix="iphone_fotos_"))
+    atexit.register(shutil.rmtree, d, True)
+    return d
 
 
 def load_library(phone: IPhone, workdir: Path) -> PhotoLibrary:
@@ -488,6 +568,7 @@ class Options:
     convert: str | None = None           # HEIC live umwandeln in dieses Format (Schlüssel aus CONVERT_FORMATS)
     quality: int = 90                    # Qualität für JPG/WebP/AVIF/JPEG 2000
     keep_heic: bool = False              # HEIC-Original zusätzlich behalten
+    place_level: str | None = None       # Unterordner nach Ort in Alben/Datum: "city", "state", "country"
 
 
 class Exporter:
@@ -769,14 +850,21 @@ class Exporter:
             else:
                 sub = "Alben" if g.kind == "album" else "Personen"
                 folder = self.opts.target / sub / safe_name(g.title)
+            by_place = self.opts.place_level and g.kind in ("album", "month")
             for pk in g.asset_pks:
                 a = self.lib.assets[pk]
                 if (self.opts.media == "photos" and a.is_video) or (self.opts.media == "videos" and not a.is_video):
                     continue
-                jobs.append((folder, a))
+                if by_place:
+                    jobs.append((folder / safe_name(self.lib.place_label(a, self.opts.place_level)), a))
+                else:
+                    jobs.append((folder, a))
 
         total = len(jobs)
         what = {"photos": "Fotos (ohne Videos)", "videos": "Videos (ohne Fotos)"}.get(self.opts.media, "Fotos/Videos")
+        if self.opts.place_level:
+            lvl = {"city": "Stadt", "state": "Bundesland", "country": "Land"}[self.opts.place_level]
+            self.log(f"Alben und Monate bekommen Unterordner nach Ort ({lvl}).")
         self.log(f"{total} {what} in {len(groups)} Ordnern werden exportiert …")
         s = self.stats  # wird live aktualisiert (für die Fortschrittsanzeige)
         s.update(copied=0, icloud=0, skipped=0, missing=0, failed=0, converted=0, convFailed=0)
@@ -866,7 +954,7 @@ class WebApp:
         self.stop_event = threading.Event()
         self.thumbs: dict[int, bytes | None] = {}
         self.last_seen = time.time()
-        self.tmpdir = Path(tempfile.mkdtemp(prefix="iphone_fotos_"))
+        self.tmpdir = make_workdir()
         self.default_target = str(Path.home() / "Pictures" / "iPhone Export")
         self.icloud_dir = find_icloud_photos_dir()
         self.exporter: Exporter | None = None
@@ -978,6 +1066,8 @@ class WebApp:
                        bool(body.get("skip", True)))
         media = body.get("media") or ("all" if body.get("videos", True) else "photos")
         opts.media = media if media in ("all", "photos", "videos") else "all"
+        pl = body.get("placeLevel") or None
+        opts.place_level = pl if pl in ("city", "state", "country") else None
         conv = body.get("convert") or None
         if conv:
             if conv not in {f["id"] for f in converter_info()["formats"]}:
@@ -1193,6 +1283,8 @@ def run_cli(argv):
     medien.add_argument("--ohne-videos", "--nur-fotos", dest="nur_fotos", action="store_true",
                         help="Nur Fotos exportieren, Videos weglassen")
     medien.add_argument("--nur-videos", action="store_true", help="Nur Videos exportieren, Fotos weglassen")
+    p.add_argument("--ort", choices=["stadt", "bundesland", "land"],
+                   help="In Alben und Monaten Unterordner nach Ort anlegen")
     p.add_argument("--format", choices=list(CONVERT_FORMATS), help="HEIC live in dieses Format umwandeln")
     p.add_argument("--qualitaet", type=int, default=90, help="Qualität 10–100 für JPG/WebP/AVIF/JPEG 2000")
     p.add_argument("--heic-behalten", action="store_true", help="Bei --format das HEIC-Original zusätzlich behalten")
@@ -1202,7 +1294,7 @@ def run_cli(argv):
 
     phone = IPhone()
     print(f"Verbunden: {phone.name} (iOS {phone.ios})")
-    lib = load_library(phone, Path(tempfile.mkdtemp(prefix="iphone_fotos_")))
+    lib = load_library(phone, make_workdir())
     albums, people, months = lib.albums(), lib.people(), lib.months()
 
     if a.list or not (a.album or a.person or a.datum):
@@ -1243,6 +1335,7 @@ def run_cli(argv):
     groups = pick(albums, a.album) + pick(people, a.person) + pick_dates(a.datum)
     opts = Options(Path(a.ziel), not a.ohne_live, a.bearbeitet, True)
     opts.media = "photos" if a.nur_fotos else "videos" if a.nur_videos else "all"
+    opts.place_level = {"stadt": "city", "bundesland": "state", "land": "country"}.get(a.ort)
     if a.format:
         info = converter_info()
         if a.format not in {f["id"] for f in info["formats"]}:

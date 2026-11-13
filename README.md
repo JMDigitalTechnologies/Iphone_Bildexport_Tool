@@ -45,6 +45,10 @@ Bei einem Startfehler steht der Grund in `iphone_fotos_fehler.log`.
   bleiben bei JPG/PNG/WebP/AVIF erhalten (TIFF: Datum und Kamera, ohne GPS). Das HEIC-Original kann
   zusätzlich behalten werden. Die Umwandlung läuft parallel, die Übertragung wird dadurch kaum langsamer.
   Kommandozeile: `--format jpg --qualitaet 90 [--heic-behalten]`.
+- **Unterordner nach Ort** (Optionen, bzw. `--ort stadt|bundesland|land`): Alben und „Nach Datum“ bekommen
+  Unterordner nach Stadt, Bundesland/Region oder Land, z. B. `Nach Datum\2025\07 Juli\Rom (Italien)`.
+  Der Ort stammt vom iPhone selbst (dieselben Namen wie in der Fotos-App, keine Internetabfrage);
+  Orte im Ausland bekommen das Land dazu, Fotos ohne Ortsangabe landen in `Ohne Ort`.
 - **Was exportieren?** In den Optionen wählbar: *Fotos & Videos* (Standard), *Nur Fotos* oder *Nur Videos*
   (Kommandozeile: `--nur-fotos` bzw. `--nur-videos`). Live-Photo-Clips gehören zu den Fotos und hängen
   an der eigenen Option „Live-Photo-Videos“.

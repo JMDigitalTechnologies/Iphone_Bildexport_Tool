@@ -289,6 +289,8 @@ dialog { overflow-x: hidden; }
 .option-block > label b { display: block; font-size: var(--fs-base); }
 .option-block small { color: var(--text-2); font-size: var(--fs-sm); }
 .option-block select.input { padding-right: var(--space-2); }
+.option-block code { font-size: .75rem; background: var(--surface-2); padding: 0 4px; border-radius: 4px; }
+.place-block { border-top: 0; margin-top: 0; }
 .range-row { display: flex; align-items: center; gap: var(--space-3); min-height: var(--tap); }
 .range-row input[type=range] { flex: 1; accent-color: var(--accent); min-height: var(--tap); }
 .range-row output { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -436,6 +438,15 @@ details.log summary { cursor: pointer; color: var(--text-2); min-height: 32px; d
         </div>
         <small id="mediaHint">Live-Photo-Clips gehören zu den Fotos und richten sich nach der Option „Live-Photo-Videos“.</small>
       </fieldset>
+      <div class="option-block place-block">
+        <label for="optPlace"><b>Unterordner nach Ort</b><small>Für Alben und „Datum“, z.&nbsp;B. <code>2025\07 Juli\Rom (Italien)</code>. Orte im Ausland bekommen das Land dazu, Fotos ohne Ort landen in „Ohne Ort“.</small></label>
+        <select id="optPlace" class="input">
+          <option value="">Keine Unterordner</option>
+          <option value="city">Stadt</option>
+          <option value="state">Bundesland / Region</option>
+          <option value="country">Land</option>
+        </select>
+      </div>
       <label class="option"><input type="checkbox" id="optLive" checked><span><b>Live-Photo-Videos</b><small>Die kurzen .MOV-Clips der Live Photos mitnehmen.</small></span></label>
       <label class="option"><input type="checkbox" id="optEdited"><span><b>Bearbeitete Versionen</b><small>Zusätzlich als „…_bearbeitet.jpg“ speichern.</small></span></label>
       <label class="option"><input type="checkbox" id="optSkip" checked><span><b>Vorhandene überspringen</b><small>Bereits exportierte Dateien nicht erneut kopieren.</small></span></label>
@@ -901,7 +912,8 @@ function updateSummary() {
     : media === "photos" ? `${nf.format(photos)} Fotos (ohne Videos)`
     : media === "videos" ? `${nf.format(vids)} Videos (ohne Fotos)`
     : `${nf.format(photos)} Fotos · ${nf.format(vids)} Videos`)
-    + (parts.length && conv && media !== "videos" ? ` · HEIC → ${conv.name.split(" ")[0]}` : "");
+    + (parts.length && conv && media !== "videos" ? ` · HEIC → ${conv.name.split(" ")[0]}` : "")
+    + (parts.length && $("optPlace").value && (a || m) ? ` · nach ${$("optPlace").selectedOptions[0].textContent.split(" ")[0]}` : "");
   const nothing = parts.length && (media === "videos" ? vids === 0 : media === "photos" ? photos === 0 : false);
   $("exportBtn").disabled = !gs.length || S.phase !== "ready" || !!nothing;
   if (nothing) $("selDetail").textContent = media === "videos" ? "Keine Videos in der Auswahl" : "Keine Fotos in der Auswahl";
@@ -966,6 +978,9 @@ $("optQualityOut").textContent = $("optQuality").value;
 $("optKeepHeic").checked = store.get("keepHeic", false);
 $("optKeepHeic").onchange = () => store.set("keepHeic", $("optKeepHeic").checked);
 
+$("optPlace").value = store.get("placeLevel", "");
+$("optPlace").onchange = () => { store.set("placeLevel", $("optPlace").value); updateSummary(); };
+
 function currentMedia() {
   const r = document.querySelector('input[name="media"]:checked');
   return r ? r.value : "all";
@@ -992,6 +1007,7 @@ $("exportBtn").onclick = async () => {
     ids: [...S.selected], target: $("targetInput").value.trim(),
     live: $("optLive").checked, edited: $("optEdited").checked, skip: $("optSkip").checked,
     media: currentMedia(),
+    placeLevel: $("optPlace").value,
     convert: $("optConvert").disabled ? "" : $("optConvert").value,
     quality: +$("optQuality").value, keepHeic: $("optKeepHeic").checked,
     icloud: $("optICloud").checked && !$("optICloud").disabled,
